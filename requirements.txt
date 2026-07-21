@@ -1,0 +1,9 @@
+river>=0.25,<0.26
+scikit-learn>=1.4
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+streamlit>=1.30
+pillow>=10.0
+requests>=2.31
+pytest>=8.0
