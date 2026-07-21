@@ -62,6 +62,7 @@ python scripts/run_smoke_test.py     # ~1s, proves the pipeline end to end
 python scripts/run_experiment.py     # ~100s, writes results/metrics.csv + figures
 python scripts/run_sweep.py          # ~200s, writes results/sweep.csv
 python scripts/run_transfer.py       # ~215s, NAB transfer test
+python scripts/run_threshold_study.py  # ~495s, threshold rule comparison
 ```
 
 Tested on Python 3.13. On Windows, launch the app with
@@ -162,6 +163,46 @@ So the honest conclusion is that the *method* carries across datasets but the
 *numbers* do not. The threshold has to be set from the expected anomaly rate of
 the specific deployment; it is not a property of the approach.
 
+### Deriving the threshold instead of hand-setting it
+
+The obvious fix is to compute the threshold from the warm-up score distribution
+rather than picking a quantile per dataset. `src/thresholds.py` implements four
+rules and `scripts/run_threshold_study.py` applies each one *unchanged* to all
+seven labelled streams, against the hand-tuned per-dataset baseline. Mean lift
+over flag-everything, with the strategy held fixed:
+
+| rule | drift-triggered | periodic | online-no-reset | static |
+| --- | --- | --- | --- | --- |
+| **quantile@0.9** (= target_rate@0.10) | **−0.068** | **−0.070** | **−0.051** | **+0.026** |
+| hand-tuned per dataset | −0.100 | −0.075 | −0.061 | −0.023 |
+| quantile@0.98 | −0.162 | −0.145 | −0.109 | −0.018 |
+| robust_z@3 | −0.220 | −0.233 | −0.236 | −0.013 |
+| tukey@3 | −0.236 | −0.241 | −0.236 | −0.146 |
+
+**One uniform quantile beats per-dataset hand tuning on every strategy**, by
++0.005 to +0.049. That is the result worth having: it removes a manual knob and
+does slightly better than the knob did.
+
+Three honest caveats, all of which cut against the idea:
+
+- **The robust rule lost.** `robust_z` was written on the theory that the
+  binding problem was warm-up contamination, and it *is* measurably more robust
+  — a fixed quantile shifts ~81% under 35% contamination, `robust_z` ~34%. But
+  only one of seven streams is contaminated at all, so robustness bought nothing
+  and cost calibration accuracy. **The hypothesis was wrong.**
+- **`target_rate` is a reparameterisation, not a new rule.** `target_rate(r)` is
+  exactly `quantile(1 − r)` and gives bit-identical results. It survives because
+  its parameter means something to whoever sets it.
+- **Every rule still has negative mean lift for the three adaptive strategies.**
+  A better threshold narrows the gap to flag-everything; it does not close it.
+  Only the static Isolation Forest gets above the line on average.
+
+The recommended setting is exported as `thresholds.RECOMMENDED_RULE`. The main
+SKAB experiment deliberately keeps its hand-tuned value — on that one stream the
+uniform rule wins by favouring the static baseline while collapsing the adaptive
+strategies (0.11 against 0.54 for `periodic`), so adopting it there would make
+the headline comparison worse to chase a cross-dataset average.
+
 ## Limitations
 
 These are real constraints on what the numbers above can support.
@@ -212,13 +253,14 @@ absolute z-score of the sensors against the window the model was last built on.
 
 ```
 src/           data_loader (SKAB + NAB), drift_injection, models, detectors,
-               evaluate, experiment, sweep
+               thresholds, evaluate, experiment, sweep
 app/           streamlit_app.py
 scripts/       download_data, run_smoke_test, run_experiment, run_tuning,
                run_sweep, run_transfer, GIF export
 notebooks/     kaggle_experiment.ipynb
-results/       metrics.csv, sweep.csv, tuning.csv, transfer.csv, figures/, demo.gif
-tests/         73 tests
+results/       metrics.csv, sweep.csv, tuning.csv, transfer.csv,
+               threshold_study.csv, figures/, demo.gif
+tests/         100 tests
 ```
 
 `results/demo.gif` is a screen capture of the running dashboard.

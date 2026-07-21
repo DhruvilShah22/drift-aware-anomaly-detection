@@ -1,0 +1,11 @@
+rule,mean_lift,worst_stream,streams_beaten,n_streams
+target_rate@0.05,0.062,-0.167,4,7
+quantile@0.9,0.059,-0.15,4,7
+target_rate@0.10,0.059,-0.15,4,7
+quantile@0.98,0.024,-0.179,4,7
+hand-tuned,0.024,-0.179,4,7
+robust_z@2,0.02,-0.15,4,7
+tukey@1.5,0.013,-0.151,4,7
+robust_z@3,-0.013,-0.18,3,7
+robust_z@5,-0.113,-0.502,2,7
+tukey@3,-0.146,-0.486,1,7

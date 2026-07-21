@@ -41,6 +41,8 @@ import pandas as pd
 from river import anomaly
 from sklearn.ensemble import IsolationForest
 
+from src.thresholds import ThresholdRule, build_rule
+
 # Warm-up min/max are widened by this fraction of the observed range. Without a
 # margin, ordinary variation just past the edge of the warm-up window would
 # saturate the boundary leaves and read as anomalous from the first step.
@@ -100,12 +102,18 @@ class OnlineHalfSpaceTrees:
         window_size: int = 250,
         seed: int = 42,
         threshold_quantile: float = DEFAULT_THRESHOLD_QUANTILE,
+        threshold_rule: ThresholdRule | str | float | None = None,
     ) -> None:
         self.n_trees = n_trees
         self.height = height
         self.window_size = window_size
         self.seed = seed
         self.threshold_quantile = threshold_quantile
+        # `threshold_rule` supersedes `threshold_quantile` when given; the older
+        # argument stays so existing callers keep working unchanged.
+        self.threshold_rule = build_rule(
+            threshold_rule if threshold_rule is not None else threshold_quantile
+        )
 
         self.threshold = float("inf")
         self._model: anomaly.HalfSpaceTrees | None = None
@@ -151,7 +159,7 @@ class OnlineHalfSpaceTrees:
                 f"warm-up of {len(frame)} rows produced no usable scores; it must "
                 f"be longer than window_size={self.window_size}"
             )
-        self.threshold = float(np.quantile(informative, self.threshold_quantile))
+        self.threshold = self.threshold_rule(informative)
 
     def _require_model(self) -> anomaly.HalfSpaceTrees:
         if self._model is None:
@@ -189,11 +197,15 @@ class StaticIsolationForest:
         contamination: float | str = "auto",
         seed: int = 42,
         threshold_quantile: float = DEFAULT_THRESHOLD_QUANTILE,
+        threshold_rule: ThresholdRule | str | float | None = None,
     ) -> None:
         self.n_estimators = n_estimators
         self.contamination = contamination
         self.seed = seed
         self.threshold_quantile = threshold_quantile
+        self.threshold_rule = build_rule(
+            threshold_rule if threshold_rule is not None else threshold_quantile
+        )
 
         self.threshold = float("inf")
         self._model: IsolationForest | None = None
@@ -220,7 +232,7 @@ class StaticIsolationForest:
         self._model.fit(frame.to_numpy())
 
         scores = -self._model.score_samples(frame.to_numpy())
-        self.threshold = float(np.quantile(scores, self.threshold_quantile))
+        self.threshold = self.threshold_rule(scores)
 
     def _require_model(self) -> IsolationForest:
         if self._model is None:

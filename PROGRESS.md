@@ -415,6 +415,59 @@ a measurement, which is strictly better — and the measurement is unflattering.
 Warm-up contamination was checked per series and is 0.0% everywhere, so none of
 these numbers are explained by anomalies leaking into the warm-up window.
 
+### 2026-07-21 — Data-driven threshold implemented and measured
+
+`src/thresholds.py` (4 rules), `scripts/run_threshold_study.py`, 27 new tests.
+100 tests pass. Existing scripts and `results/metrics.csv` are unchanged — the
+rule supersedes `threshold_quantile` only when explicitly given, so every prior
+caller still works.
+
+The study applies each rule **unchanged** to all seven labelled streams against
+the hand-tuned per-dataset baseline. Mean lift over flag-everything, strategy
+held fixed (`results/threshold_study_by_strategy.csv`):
+
+| rule | drift-triggered | periodic | online-no-reset | static |
+| --- | --- | --- | --- | --- |
+| quantile@0.9 | −0.068 | −0.070 | −0.051 | +0.026 |
+| hand-tuned | −0.100 | −0.075 | −0.061 | −0.023 |
+| quantile@0.98 | −0.162 | −0.145 | −0.109 | −0.018 |
+| robust_z@3 | −0.220 | −0.233 | −0.236 | −0.013 |
+| tukey@3 | −0.236 | −0.241 | −0.236 | −0.146 |
+
+**The win:** one uniform quantile beats per-dataset hand tuning on all four
+strategies (+0.005 to +0.049). A manual knob is removed and results improve
+slightly. Exported as `thresholds.RECOMMENDED_RULE`.
+
+**My hypothesis was wrong.** I built `robust_z` on the theory that the binding
+constraint was warm-up contamination — SKAB valve1's warm-up is 40.1%
+anomalous, NAB's is 0.0%. The unit tests confirm it *is* more robust (a fixed
+quantile shifts ~81% under 35% contamination, `robust_z` ~34%). It still lost:
+only 1 of 7 streams is contaminated, so on the other six robustness bought
+nothing and cost calibration accuracy. Correct mechanism, wrong constraint.
+
+**`target_rate` turned out to be a reparameterisation.** `target_rate(r)` is
+exactly `quantile(1−r)` — the study rows are bit-identical. Kept because the
+parameter is interpretable, not because it adds capability.
+
+**A flaw in my own first analysis.** Ranking rules by the best strategy per
+stream made `target_rate@0.05` look like the winner at +0.062 mean lift. Holding
+the strategy fixed showed it wins on SKAB only by favouring the static baseline
+while collapsing the adaptive strategies there (0.101/0.042/0.113 against
+hand-tuned 0.502/0.357/0.544). The best-of aggregation was rewarding a rule that
+suits one model type. Both views are now printed.
+
+**The limit that remains.** Every rule still has negative mean lift for all
+three HST strategies. Only the static Isolation Forest clears flag-everything on
+average. A better threshold narrows the gap; it does not close it. Three streams
+(`nyc_taxi`, `rogue_agent_key_updown`, `ec2_request_latency`) are beaten by
+nothing.
+
+**Why `labelled_scenario` keeps its hand-tuned 0.50:** on that specific stream
+the uniform rule is worse for the comparison the project is actually about, and
+switching would invalidate every committed figure, the demo cache and both GIFs
+for a change that alters no conclusion. Reasoning is in a comment at the call
+site so it does not read as an oversight.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
@@ -425,13 +478,16 @@ Ideas deliberately left undone rather than half-built:
 - The gradual-drift delay (flat at 245 rows regardless of magnitude) is the
   clearest open weakness. A detector on a different statistic — variance or a
   two-window KS test on residuals — might do better where ADWIN cannot.
-- **Setting the threshold from data rather than by hand.** The transfer result
-  makes this the highest-value next step: estimate the operating point from the
-  warm-up window's score distribution plus an expected-anomaly-rate parameter,
-  instead of hard-coding a quantile per dataset. That would turn the transfer
-  failure from a limitation into a solved problem.
 - NAB's `ec2_request_latency` and `rogue_agent_key_updown` are unsolved by any
-  configuration tried. Worth understanding why before adding more datasets.
+  configuration or threshold rule tried. Worth understanding why before adding
+  more datasets — the threshold study rules them out as a calibration problem,
+  so it is something about the series themselves.
+- **The threshold is no longer the bottleneck.** That was the leading suspect
+  and it has now been measured: the best rule improves things by ~0.03 and the
+  adaptive strategies stay below flag-everything. The remaining gap is more
+  likely the *scoring*, not the cutoff — which points at event-level evaluation
+  and at HST's suitability for univariate series, where it has a single feature
+  to split on and performs worst.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both

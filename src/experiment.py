@@ -142,6 +142,9 @@ class RunConfig:
 
     warmup_size: int = 1000
     threshold_quantile: float = DEFAULT_THRESHOLD_QUANTILE
+    # When set, this supersedes `threshold_quantile` — see src/thresholds.py.
+    # A string like "robust_z@3" is accepted so sweeps can vary it easily.
+    threshold_rule: str | None = None
     hst_n_trees: int = 25
     hst_height: int = 8
     hst_window_size: int = 250
@@ -186,7 +189,11 @@ def run_strategy(
             f"stream of {n} rows is too short for a warm-up of {warmup}"
         )
 
-    model_kwargs: dict = {"threshold_quantile": config.threshold_quantile, "seed": config.seed}
+    model_kwargs: dict = {
+        "threshold_quantile": config.threshold_quantile,
+        "threshold_rule": config.threshold_rule,
+        "seed": config.seed,
+    }
     if strategy.model_kind == "hst":
         model_kwargs.update(
             n_trees=config.hst_n_trees,
@@ -311,6 +318,8 @@ class Scenario:
     has_true_anomalies: bool
     note: str = ""
     threshold_quantile: float = DEFAULT_THRESHOLD_QUANTILE
+    # When set, supersedes `threshold_quantile` (see src/thresholds.py).
+    threshold_rule: str | None = None
 
 
 def injected_scenarios(
@@ -385,6 +394,16 @@ def labelled_scenario(max_files: int | None = None) -> Scenario:
         # Permissive: roughly 35% of this stream is genuinely anomalous, so a
         # selective threshold caps recall far below anything useful. The sweep
         # confirmed 0.50 is where the adaptive strategies do best here.
+        #
+        # Deliberately left as the hand-tuned value rather than switched to
+        # thresholds.RECOMMENDED_RULE. The threshold study found the uniform
+        # rule better *on average across both datasets*, but on this particular
+        # stream it wins by favouring the static baseline while collapsing the
+        # adaptive strategies (0.11 against 0.54 for periodic). Changing it here
+        # would make the headline comparison worse to chase a cross-dataset
+        # average, and would invalidate every committed figure and GIF for a
+        # difference that changes no conclusion. Use RECOMMENDED_RULE for new
+        # streams; see PROGRESS.md.
         threshold_quantile=0.50,
     )
 
@@ -402,7 +421,11 @@ NAB_SERIES = (
 )
 
 
-def nab_scenario(series_key: str, threshold_quantile: float = 0.98) -> Scenario:
+def nab_scenario(
+    series_key: str,
+    threshold_quantile: float = 0.98,
+    threshold_rule: str | None = None,
+) -> Scenario:
     """One NAB series, for testing whether SKAB-chosen settings transfer.
 
     NAB has no injected drift and no ground-truth change points, so only anomaly
@@ -421,6 +444,7 @@ def nab_scenario(series_key: str, threshold_quantile: float = 0.98) -> Scenario:
         has_true_anomalies=True,
         note=f"NAB {series_key}, {stream.anomaly_rate:.1%} anomalous, univariate",
         threshold_quantile=threshold_quantile,
+        threshold_rule=threshold_rule,
     )
 
 
@@ -487,7 +511,11 @@ def compare(
     """Run every strategy over one scenario and return the summary plus raw runs."""
     strategies = strategies or default_strategies()
     config = config or RunConfig()
-    config = replace(config, threshold_quantile=scenario.threshold_quantile)
+    config = replace(
+        config,
+        threshold_quantile=scenario.threshold_quantile,
+        threshold_rule=scenario.threshold_rule or config.threshold_rule,
+    )
 
     rows, runs = [], {}
     for strategy in strategies:
