@@ -32,9 +32,11 @@ system default 3.14 — `river` has no cp314 wheels.
 - [x] **Phase 2 — Drift injection:** four drift shapes with known change points + tests
 - [x] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
 - [x] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
-- [ ] **Phase 5 — Comparison run:** three-strategy experiment, first real metrics + figures
+- [x] **Phase 5 — Comparison run:** three-strategy experiment, first real metrics + figures
 - [ ] **Phase 6 — Streamlit demo:** live dashboard, export `results/demo.gif`
-- [ ] **Phase 7 — Light tuning:** small sweep, regenerate table and figures
+- [x] **Phase 7 — Light tuning:** small sweep, regenerate table and figures
+      *(done early — the first run was visibly miscalibrated and the table would
+      have been misleading to leave standing)*
 - [ ] **Phase 8 — Kaggle notebook:** package the heavy run
 - [ ] **Phase 9 — Write-up:** finalize README, push
 
@@ -159,12 +161,106 @@ precision/recall/F1 of 0 rather than being undefined, so silence loses a
 comparison instead of dropping out of it. False alarms are reported per 1000
 steps so streams of different lengths compare fairly.
 
-**Next step:** Phase 5. Write `src/experiment.py` running all three strategies
-over the same stream — static (warm up once, never adapt), periodic (re-warm
-every N steps regardless), drift-triggered (re-warm only when the monitor fires
-on the anomaly score). All three share warm-up length and threshold quantile so
-the only difference is *when* they adapt. Then `scripts/run_smoke_test.py` for a
-fast local run, and first real metrics into `results/metrics.csv` plus figures.
+### 2026-07-21 — Phases 5 and 7 complete
+
+`src/experiment.py`, `scripts/run_smoke_test.py`, `scripts/run_experiment.py`,
+`scripts/run_tuning.py`. 59 tests pass. Smoke test runs in ~1s, the full
+experiment in ~100s, the sweep in ~240s. Real results are in
+`results/metrics.csv` and `results/tuning.csv`.
+
+Phase 7 got pulled forward because the first run was plainly miscalibrated and
+leaving a misleading table committed was worse than doing the sweep early.
+
+#### Three things the code got wrong, all found by running it
+
+1. **The retraining strategies were also learning continuously.** That made
+   `periodic` and `drift-triggered` numerically identical to the
+   `online-no-reset` control on the labelled stream — continuous learning had
+   already absorbed the shift, leaving the rebuild nothing to do. Only the
+   control learns between rebuilds now.
+2. **The drift monitor watched the model's own anomaly score.** Self-defeating
+   for the same reason: a learning model accommodates the shift, its score
+   distribution never moves, the detector never fires. Zero detections across
+   the entire labelled stream. It now watches mean absolute z-score of the
+   inputs against the window the model was last built on.
+3. **A feedback loop I was wrong about.** I hypothesised that refitting the
+   reference retriggered ADWIN, and added `DriftMonitor.reset()` to stop it.
+   Adaptation counts came back *identical*, so the hypothesis was false. The
+   real cause is in the next section. The reset is kept as hygiene but is not
+   load-bearing for any reported number, and the code says so.
+
+#### The finding that matters most: SKAB's anomaly-free recording is not stationary
+
+Running `drift-triggered` at **magnitude 0.0** — no injected drift at all — still
+produces 18 adaptations, at essentially the same positions as with a 3 sd step
+injected:
+
+```
+magnitude 0.0: detections [1287, 1575, 2023, 2471, 2759, 3239, 3591, 4135, 5095, ...]
+magnitude 3.0: detections [1287, 1575, 2023, 2471, 2759, 3239, 3591, 4135, 4711, ...]
+```
+
+The injected change at row 4702 adds exactly one detection, at 4711 — a 9-row
+delay, which is genuinely fast. Everything else is the detector responding to
+real non-stationarity in the recording. "Anomaly-free" means no annotated
+faults; it does not mean a fixed distribution.
+
+**Consequence for the metrics:** `false_alarms_per_1k` on the injected streams
+counts those as false alarms, which is unfair — the process really was changing,
+just not in a way I have ground truth for. That number is an upper bound on the
+spurious-detection rate, not a measurement of it, and the write-up must say so.
+Detection *delay* on the injected point is unaffected and remains exact.
+
+#### Calibration: the threshold is per-scenario, and deliberately so
+
+The alarm threshold encodes how often anomalies are expected, and the two stream
+families differ by more than an order of magnitude — the injected streams have
+no true anomalies, the labelled valve1 stream is ~35% anomalous. One number
+cannot serve both; forcing it just yields a badly calibrated detector on one.
+So: **q=0.98 on the injected streams** (rare-anomaly operating point), **q=0.50
+on the labelled stream**. Both are recorded in the results table.
+
+Sweep outcomes: ADWIN `delta=0.002` (the default) detects 6/6 change points at a
+mean 192-step delay; `delta=0.2` reacts faster (123) but nearly doubles the
+false-alarm rate. HST `n_trees=25` beats 10 marginally and 50 outright, at half
+the runtime of 50. Kept both defaults.
+
+#### Full-run results (real, from `results/metrics.csv`)
+
+Injected streams, alarm rate — every flag here is a false alarm by construction:
+
+| stream | static | online-no-reset | periodic | drift-triggered | delay |
+| --- | --- | --- | --- | --- | --- |
+| sudden | 0.934 | 0.010 | 0.014 | 0.092 | 9 |
+| incremental | 0.933 | 0.007 | 0.007 | 0.009 | 181 |
+| gradual | 0.934 | 0.013 | 0.043 | 0.035 | 245 |
+| recurring | 0.934 | 0.010 | 0.039 | 0.222 | 20 |
+
+Labelled `skab-valve1` (18160 rows, 34.7% anomalous, flag-everything F1 = 0.516):
+
+| strategy | F1 | alarm rate | beats flag-everything |
+| --- | --- | --- | --- |
+| static | 0.513 | 0.998 | no |
+| online-no-reset | 0.357 | 0.293 | no |
+| periodic | **0.544** | 0.523 | yes |
+| drift-triggered | 0.502 | 0.509 | no |
+
+**Read these honestly.** The two failure modes are demonstrated cleanly: static
+flags 93% of points after a shift, the always-learning control goes silent at
+1%. But on the labelled stream, point-wise F1 is a weak discriminator — static
+"scores" 0.513 purely by flagging 99.8% of points, essentially the
+flag-everything baseline. Only `periodic` beats that baseline, and only just.
+The defensible claim is about **alarm volume at comparable F1** (periodic and
+drift-triggered reach similar F1 while alarming on half as many points), not
+about F1 supremacy. Do not overclaim this in the README.
+
+**Next step:** Phase 6, the Streamlit demo — the deliverable this project is
+judged on. Read cached runs from `data/cache/runs_full.pkl` rather than
+recomputing, so it starts instantly on a weak laptop. Selectors for drift shape
+and strategy, a replay control, and live signal / drift markers / flagged points
+with a running alarm-rate and F1 readout. Then export the GIF two ways as
+agreed: a matplotlib animation from real run output, plus a Playwright screen
+capture of the live dashboard.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both

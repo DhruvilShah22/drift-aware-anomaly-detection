@@ -201,6 +201,43 @@ def test_cooldown_suppresses_repeat_detections():
     assert np.all(np.diff(with_cooldown.detections) >= 400)
 
 
+@pytest.mark.parametrize("kind", DETECTOR_KINDS)
+def test_reset_clears_the_window_but_keeps_history(kind):
+    monitor = build_detector(kind, cooldown=0)
+    for value in _step_stream():
+        monitor.update(value)
+
+    before = list(monitor.detections)
+    assert before, "need at least one detection to make this test meaningful"
+
+    monitor.reset()
+    assert monitor.detections == before, "history must survive a reset"
+    assert not monitor.detector.drift_detected, "a fresh detector cannot already be firing"
+
+
+def test_resetting_on_every_detection_still_tracks_a_shift():
+    """Reset-on-adapt must not break detection, whatever it does to alarm counts."""
+    monitor = build_detector("adwin", cooldown=0)
+
+    fired = []
+    for i, value in enumerate(_step_stream()):
+        if monitor.update(value):
+            fired.append(i)
+            # Stand in for an adaptation: the reference moves, so the monitor
+            # must forget the window that preceded it.
+            monitor.reset()
+
+    assert fired, "resetting must not prevent the shift from being detected"
+    assert any(i >= 600 for i in fired)
+
+
+def test_reset_requires_a_factory():
+    monitor = build_detector("adwin")
+    monitor._factory = None
+    with pytest.raises(RuntimeError, match="cannot reset"):
+        monitor.reset()
+
+
 def test_build_detector_rejects_unknown_kinds():
     with pytest.raises(ValueError, match="unknown detector kind"):
         build_detector("page-hinkley")
