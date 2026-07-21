@@ -29,7 +29,7 @@ system default 3.14 — `river` has no cp314 wheels.
 
 - [x] **Phase 0 — Setup:** git init, repo skeleton, requirements, .gitignore, PROGRESS.md
 - [x] **Phase 1 — Data:** `data_loader.py`, download and verify a real dataset, cache it
-- [ ] **Phase 2 — Drift injection:** four drift shapes with known change points + tests
+- [x] **Phase 2 — Drift injection:** four drift shapes with known change points + tests
 - [ ] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
 - [ ] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
 - [ ] **Phase 5 — Comparison run:** three-strategy experiment, first real metrics + figures
@@ -81,10 +81,33 @@ Caching: raw CSVs land in `data/raw/` and parsed frames in `data/cache/` (both
 gitignored); 2000-row slices go to `data/sample/` and **are** committed, so the
 Streamlit demo and tests run with no network access.
 
-**Next step:** Phase 2. Write `src/drift_injection.py` with the four drift
-shapes — sudden (step), incremental (ramp), gradual (interleaved regimes),
-recurring (seasonal) — each returning the modified stream plus the exact indices
-where drift was applied, so detection timing can be measured against ground
-truth. Build them on top of `load_anomaly_free()`. Cover each shape with pytest
-tests in `tests/test_drift_injection.py` asserting the signal actually changes at
-the declared points and nowhere else.
+### 2026-07-21 — Phase 2 complete
+
+`src/drift_injection.py` implements all four shapes. 16 pytest tests pass.
+
+Design decisions:
+
+- Shifts are sized in **units of each column's own standard deviation**, so one
+  `magnitude` setting means the same thing across sensors on very different
+  scales (Voltage vs Volume Flow RateRMS). Constant columns get no shift.
+- Each injector returns `drift_points` (where a change begins — what a detector
+  should flag) *and* a per-row `drift_mask` (which regime each row is in — what
+  false-alarm accounting uses). Keeping both separate matters for `recurring`.
+- `gradual` shifts whole rows, choosing regimes with rising probability, rather
+  than interpolating like `incremental` does. Early in its window the new regime
+  looks like sporadic outliers, which is the case that breaks mean-shift logic.
+- `recurring` truncates to a whole number of blocks. Without that, a period that
+  does not divide the stream length left a boundary a row or two from the end
+  that no detector could fairly be scored on.
+
+Verified on the real 9405-row anomaly-free SKAB recording at magnitude 3.0:
+sudden → point 4702; incremental → point 3762; gradual → point 3762 with 45.1%
+of rows shifted; recurring → points 2351/4702/7053 over 9404 usable rows.
+
+**Next step:** Phase 3. Write `src/models.py` (a `river.anomaly.HalfSpaceTrees`
+online wrapper plus a `sklearn.ensemble.IsolationForest` static baseline, behind
+one common `score_one`/`update` interface so `experiment.py` can swap them) and
+`src/detectors.py` (thin ADWIN/KSWIN wrappers that take a scalar per step and
+report `drift_detected`). HST expects features roughly in [0, 1], so the online
+path needs `preprocessing.MinMaxScaler` or `StandardScaler` in front of it —
+check which behaves better on a short run before committing to one.
