@@ -389,6 +389,41 @@ def labelled_scenario(max_files: int | None = None) -> Scenario:
     )
 
 
+# NAB series long enough to warm up on and still leave stream to measure.
+# `rogue_agent_key_hold` is excluded: 1882 rows leaves under 900 after a
+# 1000-row warm-up, which is too little to say anything about.
+NAB_SERIES = (
+    "realKnownCause/machine_temperature_system_failure.csv",
+    "realKnownCause/cpu_utilization_asg_misconfiguration.csv",
+    "realKnownCause/nyc_taxi.csv",
+    "realKnownCause/ambient_temperature_system_failure.csv",
+    "realKnownCause/rogue_agent_key_updown.csv",
+    "realKnownCause/ec2_request_latency_system_failure.csv",
+)
+
+
+def nab_scenario(series_key: str, threshold_quantile: float = 0.98) -> Scenario:
+    """One NAB series, for testing whether SKAB-chosen settings transfer.
+
+    NAB has no injected drift and no ground-truth change points, so only anomaly
+    quality is measured here — never drift timing. Its value is that it differs
+    from SKAB in exactly the ways that would break a transferred calibration:
+    univariate rather than 8 sensors, and roughly 10% anomalous rather than 35%.
+    """
+    from src.data_loader import load_nab_stream
+
+    stream = load_nab_stream(series_key)
+    return Scenario(
+        name=series_key.split("/")[-1].replace(".csv", ""),
+        frame=stream.frame,
+        labels=stream.labels,
+        change_points=[],
+        has_true_anomalies=True,
+        note=f"NAB {series_key}, {stream.anomaly_rate:.1%} anomalous, univariate",
+        threshold_quantile=threshold_quantile,
+    )
+
+
 # --------------------------------------------------------------------------
 # Comparison
 # --------------------------------------------------------------------------

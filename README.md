@@ -43,7 +43,8 @@ question becomes whether reacting to *detected* change lands anywhere better.
 
 Built on [`river`](https://riverml.xyz) (Half-Space Trees, ADWIN, KSWIN) and
 scikit-learn, over [SKAB](https://github.com/waico/SKAB), a labelled industrial
-sensor benchmark.
+sensor benchmark, with [NAB](https://github.com/numenta/NAB) as a second dataset
+used to test whether the calibration transfers.
 
 ## Quickstart
 
@@ -60,6 +61,7 @@ run. To reproduce the numbers below:
 python scripts/run_smoke_test.py     # ~1s, proves the pipeline end to end
 python scripts/run_experiment.py     # ~100s, writes results/metrics.csv + figures
 python scripts/run_sweep.py          # ~200s, writes results/sweep.csv
+python scripts/run_transfer.py       # ~215s, NAB transfer test
 ```
 
 Tested on Python 3.13. On Windows, launch the app with
@@ -125,6 +127,41 @@ resists it entirely — early in the transition the new regime looks like scatte
 outliers rather than a shift in level. ADWIN beat KSWIN on both delay and false
 alarms (~1.9 vs ~2.8 per 1000 steps).
 
+### Does the calibration transfer? Mostly not
+
+Everything above was tuned on SKAB, which invites the obvious objection that the
+settings are fitted to one industrial rig. [NAB](https://github.com/numenta/NAB)
+tests that directly — it is univariate rather than 8 sensors, ~10% anomalous
+rather than 35%, and covers server metrics, taxi demand and ambient temperature.
+Six series, SKAB's settings applied unchanged, against the same settings retuned
+on NAB (`python scripts/run_transfer.py`):
+
+| series | flag-everything | transferred (q=0.98) | retuned | best q | cost |
+| --- | --- | --- | --- | --- | --- |
+| machine_temperature | 0.189 | **0.528** | 0.528 | 0.98 | 0.000 |
+| cpu_utilization_asg | 0.162 | 0.163 | **0.399** | 0.95 | 0.237 |
+| ambient_temperature | 0.208 | **0.371** | 0.371 | 0.98 | 0.000 |
+| nyc_taxi | 0.200 | 0.112 | 0.230 | 0.50 | 0.118 |
+| ec2_request_latency | 0.205 | 0.107 | 0.189 | 0.50 | 0.082 |
+| rogue_agent_key_updown | 0.219 | 0.040 | 0.162 | 0.50 | 0.122 |
+
+**Not retuning costs 0.093 F1 on average, and the transferred setting beats
+flag-everything on only 3 of 6 series.** The best threshold is bimodal — 0.95–0.98
+on three series, 0.50 on the other three — so no single value serves NAB, let
+alone both datasets.
+
+Two further results worth stating plainly:
+
+- **On `ec2_request_latency` and `rogue_agent_key_updown`, nothing beats
+  flag-everything even after retuning.** Those series are not solved here.
+- **No strategy wins consistently.** The best performer varies by series across
+  all four policies, including the two controls. Whatever advantage the adaptive
+  approach shows on SKAB does not reproduce as a general ranking.
+
+So the honest conclusion is that the *method* carries across datasets but the
+*numbers* do not. The threshold has to be set from the expected anomaly rate of
+the specific deployment; it is not a property of the approach.
+
 ## Limitations
 
 These are real constraints on what the numbers above can support.
@@ -143,8 +180,9 @@ These are real constraints on what the numbers above can support.
 - **The labelled stream is concatenated** from 16 separate valve1 recordings to
   get usable length. The joins are genuine regime changes of unknown size, so
   that stream is used for anomaly quality only, never for drift timing.
-- **One dataset, one sensor domain.** Nothing here shows the thresholds or
-  detector settings transfer to another process.
+- **The calibration does not transfer.** Measured, not assumed — see the
+  transfer section above. SKAB's threshold costs 0.093 F1 on average on NAB and
+  beats the trivial baseline on only half its series.
 - **Thresholds are calibrated per stream family** (0.98 quantile where anomalies
   are rare, 0.50 where they are a third of the data). That is a deployment-time
   choice, not something the method decides for itself.
@@ -173,12 +211,14 @@ absolute z-score of the sensors against the window the model was last built on.
 ## Layout
 
 ```
-src/           data_loader, drift_injection, models, detectors, evaluate, experiment, sweep
+src/           data_loader (SKAB + NAB), drift_injection, models, detectors,
+               evaluate, experiment, sweep
 app/           streamlit_app.py
-scripts/       download_data, run_smoke_test, run_experiment, run_tuning, run_sweep, GIF export
+scripts/       download_data, run_smoke_test, run_experiment, run_tuning,
+               run_sweep, run_transfer, GIF export
 notebooks/     kaggle_experiment.ipynb
-results/       metrics.csv, sweep.csv, tuning.csv, figures/, demo.gif
-tests/         64 tests
+results/       metrics.csv, sweep.csv, tuning.csv, transfer.csv, figures/, demo.gif
+tests/         73 tests
 ```
 
 `results/demo.gif` is a screen capture of the running dashboard.

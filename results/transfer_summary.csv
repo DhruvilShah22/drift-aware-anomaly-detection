@@ -1,0 +1,7 @@
+series,flag_everything,transferred_q098,retuned,best_q,cost_of_transfer,transferred_beats_baseline
+machine_temperature_system_failure,0.189,0.528,0.528,0.98,0.0,True
+cpu_utilization_asg_misconfiguration,0.162,0.163,0.399,0.95,0.237,True
+nyc_taxi,0.2,0.112,0.23,0.5,0.118,False
+ambient_temperature_system_failure,0.208,0.371,0.371,0.98,0.0,True
+rogue_agent_key_updown,0.219,0.04,0.162,0.5,0.122,False
+ec2_request_latency_system_failure,0.205,0.107,0.189,0.5,0.082,False

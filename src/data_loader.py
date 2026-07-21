@@ -192,6 +192,161 @@ def load_anomaly_free(use_cache: bool = True) -> StreamData:
     return load_skab_stream("anomaly-free", "anomaly-free.csv", use_cache=use_cache)
 
 
+# ---------------------------------------------------------------------------
+# NAB (Numenta Anomaly Benchmark)
+# ---------------------------------------------------------------------------
+#
+# NAB is the second dataset, used to ask whether the settings chosen on SKAB
+# transfer to data they were not tuned on. It differs from SKAB in the two ways
+# that matter for that question: it is **univariate** where SKAB has 8 sensors,
+# and its anomalies are **rare** (a few percent) where SKAB's valve1 stream is
+# about a third anomalous.
+#
+# Labels come as time *windows* rather than per-row flags, so they are expanded
+# against each series' own timestamps.
+
+NAB_RAW_BASE = "https://raw.githubusercontent.com/numenta/NAB/master"
+NAB_API_BASE = "https://api.github.com/repos/numenta/NAB/contents/data"
+NAB_WINDOWS_PATH = "labels/combined_windows.json"
+
+NAB_VALUE_COLUMN = "value"
+NAB_TIME_COLUMN = "timestamp"
+
+
+def _download_nab_text(relative: str, timeout: int = 60) -> bytes:
+    """Fetch a file from the NAB repository, caching it under `data/raw/nab/`."""
+    destination = RAW_DIR / "nab" / relative.replace("/", "__")
+    if destination.exists() and destination.stat().st_size > 0:
+        return destination.read_bytes()
+
+    url = f"{NAB_RAW_BASE}/{relative}"
+    try:
+        response = requests.get(url, timeout=timeout, headers={"User-Agent": "nab-loader"})
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise DatasetError(f"could not download {url}: {exc}") from exc
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(response.content)
+    return response.content
+
+
+def load_nab_windows() -> dict[str, list[list[str]]]:
+    """The combined anomaly windows NAB publishes, keyed by series path."""
+    import json
+
+    raw = _download_nab_text(NAB_WINDOWS_PATH)
+    try:
+        windows = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DatasetError(f"NAB label file is not valid JSON: {exc}") from exc
+
+    if not windows:
+        raise DatasetError("NAB label file is empty")
+    return windows
+
+
+def list_nab_series(group: str = "realKnownCause", timeout: int = 30) -> list[str]:
+    """List the CSV series NAB publishes in one group."""
+    url = f"{NAB_API_BASE}/{group}"
+    try:
+        response = requests.get(url, timeout=timeout, headers={"User-Agent": "nab-loader"})
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise DatasetError(f"could not list NAB group {group!r} at {url}: {exc}") from exc
+
+    names = sorted(
+        entry["name"]
+        for entry in response.json()
+        if entry.get("type") == "file" and entry["name"].endswith(".csv")
+    )
+    if not names:
+        raise DatasetError(f"NAB group {group!r} returned no CSV files")
+    return names
+
+
+def load_nab_stream(series_key: str, use_cache: bool = True) -> StreamData:
+    """Load one NAB series as a verified `StreamData`.
+
+    `series_key` is the path NAB uses in its label file, for example
+    `realKnownCause/machine_temperature_system_failure.csv`.
+
+    NAB labels anomalies as time windows. Every row whose timestamp falls inside
+    any window is marked 1. A series whose windows do not overlap its own
+    timestamps at all would silently produce an all-zero label vector, so that
+    case is treated as an error rather than passed downstream.
+    """
+    cache_path = CACHE_DIR / f"nab_{series_key.replace('/', '_').replace('.csv', '')}.parquet"
+
+    if use_cache and cache_path.exists():
+        frame = pd.read_parquet(cache_path)
+    else:
+        raw = _download_nab_text(f"data/{series_key}")
+        try:
+            frame = pd.read_csv(
+                io.BytesIO(raw), index_col=NAB_TIME_COLUMN, parse_dates=True
+            )
+        except Exception as exc:
+            raise DatasetError(f"could not parse NAB series {series_key}: {exc}") from exc
+
+        if NAB_VALUE_COLUMN not in frame.columns:
+            raise DatasetError(
+                f"{series_key} has no '{NAB_VALUE_COLUMN}' column; "
+                f"got {list(frame.columns)}"
+            )
+        frame = frame[[NAB_VALUE_COLUMN]].astype(float).sort_index()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(cache_path)
+
+    if frame.empty:
+        raise DatasetError(f"{series_key} parsed to an empty frame")
+    if frame[NAB_VALUE_COLUMN].isna().any():
+        raise DatasetError(f"{series_key} contains missing values")
+
+    windows = load_nab_windows()
+    if series_key not in windows:
+        raise DatasetError(
+            f"{series_key} has no entry in NAB's combined_windows.json"
+        )
+
+    labels = expand_windows_to_labels(frame.index, windows[series_key], series_key)
+    return StreamData(name=series_key, frame=frame, labels=labels)
+
+
+def expand_windows_to_labels(
+    index: pd.DatetimeIndex,
+    windows: list[list[str]],
+    source: str = "series",
+) -> pd.Series:
+    """Turn NAB's [start, end] timestamp windows into a per-row 0/1 label series.
+
+    Both ends of each window are inclusive, matching how NAB defines them.
+
+    A window list that does not overlap the index at all yields an all-zero
+    label vector, which downstream would look like a clean series rather than a
+    loading bug. That is treated as an error instead.
+    """
+    labels = pd.Series(0, index=index, dtype=int)
+    for window in windows:
+        if len(window) != 2:
+            raise DatasetError(
+                f"{source} has a malformed label window {window!r}; expected [start, end]"
+            )
+        start, end = pd.Timestamp(window[0]), pd.Timestamp(window[1])
+        if start > end:
+            raise DatasetError(
+                f"{source} has a reversed label window: {start} is after {end}"
+            )
+        labels.loc[start:end] = 1
+
+    if windows and labels.sum() == 0:
+        raise DatasetError(
+            f"{source} has {len(windows)} labelled windows but none overlap its "
+            "timestamps, which means the labels were not applied correctly"
+        )
+    return labels
+
+
 def save_sample(stream: StreamData, n_rows: int = 2000) -> Path:
     """Write a small slice of a recording to `data/sample/` for the demo.
 

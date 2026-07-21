@@ -376,18 +376,62 @@ smoke test passes in 1.0s.
 - [x] README shows the demo GIF and real results tables
 - [x] every number traces to a committed CSV produced by committed code
 
+### 2026-07-21 — NAB added: calibration transfer tested
+
+Added after the main build, to answer the largest open question. NAB loads and
+is verified: 7 `realKnownCause` series, all ~10% anomalous, **univariate**.
+Labels ship as `[start, end]` timestamp windows in `labels/combined_windows.json`
+and are expanded per row; that expansion is now a pure function
+(`expand_windows_to_labels`) with 9 offline tests, because getting it subtly
+wrong would produce a plausible label vector and invalidate every metric
+silently. 73 tests pass.
+
+**Result: the calibration does not transfer.** `python scripts/run_transfer.py`,
+215s, six series, SKAB's q=0.98 applied unchanged vs retuned on NAB:
+
+| series | flag-everything | transferred | retuned | best q | cost |
+| --- | --- | --- | --- | --- | --- |
+| machine_temperature | 0.189 | 0.528 | 0.528 | 0.98 | 0.000 |
+| cpu_utilization_asg | 0.162 | 0.163 | 0.399 | 0.95 | 0.237 |
+| ambient_temperature | 0.208 | 0.371 | 0.371 | 0.98 | 0.000 |
+| nyc_taxi | 0.200 | 0.112 | 0.230 | 0.50 | 0.118 |
+| ec2_request_latency | 0.205 | 0.107 | 0.189 | 0.50 | 0.082 |
+| rogue_agent_key_updown | 0.219 | 0.040 | 0.162 | 0.50 | 0.122 |
+
+- Mean cost of not retuning: **0.093 F1**.
+- Transferred setting beats flag-everything on **3/6** series.
+- Best threshold is **bimodal** (0.95–0.98 or 0.50), so no single value serves
+  even NAB alone, never mind both datasets.
+- On `ec2_request_latency` and `rogue_agent_key_updown`, **nothing beats
+  flag-everything even after retuning**. Those series are simply not solved.
+- **No strategy wins consistently** — the best performer varies across all four
+  policies including both controls. The SKAB ranking does not generalise.
+
+Conclusion written into the README: the *method* carries, the *numbers* do not.
+The threshold has to come from the deployment's expected anomaly rate. This
+replaces the previously stated "nothing here shows it transfers" limitation with
+a measurement, which is strictly better — and the measurement is unflattering.
+
+Warm-up contamination was checked per series and is 0.0% everywhere, so none of
+these numbers are explained by anomalies leaking into the warm-up window.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
 
-- A second dataset (NAB) would test whether any of the calibration transfers.
-  Right now nothing shows it does.
 - Event-level rather than point-wise anomaly scoring would make F1 a real
   discriminator on `valve1`; the 34% base rate and long contiguous fault blocks
   are what make point-wise F1 nearly useless there.
 - The gradual-drift delay (flat at 245 rows regardless of magnitude) is the
   clearest open weakness. A detector on a different statistic — variance or a
   two-window KS test on residuals — might do better where ADWIN cannot.
+- **Setting the threshold from data rather than by hand.** The transfer result
+  makes this the highest-value next step: estimate the operating point from the
+  warm-up window's score distribution plus an expected-anomaly-rate parameter,
+  instead of hard-coding a quantile per dataset. That would turn the transfer
+  failure from a limitation into a solved problem.
+- NAB's `ec2_request_latency` and `rogue_agent_key_updown` are unsolved by any
+  configuration tried. Worth understanding why before adding more datasets.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both
