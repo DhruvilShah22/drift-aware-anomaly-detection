@@ -31,7 +31,7 @@ system default 3.14 — `river` has no cp314 wheels.
 - [x] **Phase 1 — Data:** `data_loader.py`, download and verify a real dataset, cache it
 - [x] **Phase 2 — Drift injection:** four drift shapes with known change points + tests
 - [x] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
-- [ ] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
+- [x] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
 - [ ] **Phase 5 — Comparison run:** three-strategy experiment, first real metrics + figures
 - [ ] **Phase 6 — Streamlit demo:** live dashboard, export `results/demo.gif`
 - [ ] **Phase 7 — Light tuning:** small sweep, regenerate table and figures
@@ -142,11 +142,29 @@ Detectors monitor the **model's anomaly score**, not a raw sensor channel: a
 sensor shift only matters if it degrades the detector, and the score summarises
 all eight channels through the model's eyes.
 
-**Next step:** Phase 4. Write `src/evaluate.py` with prequential precision /
-recall / F1 for anomaly flags, plus drift-detection timing (delay from each true
-change point to the first detection after it, and missed change points) and
-false-alarm rate (detections that fall in no drift region). Test it on a toy
-stream with hand-computable answers before pointing it at anything real.
+### 2026-07-21 — Phase 4 complete
+
+`src/evaluate.py` is in. 55 tests pass; every metric case is checked against
+arithmetic written out in the test, not against the code's own output.
+
+The drift-matching rule, stated once so the reported numbers can be read without
+guessing: **each true change point takes the first unused detection at or after
+it, within `horizon` (default 750) steps, and before the next change point.
+Everything left over is a false alarm.** The "before the next change point"
+clause matters on the recurring stream, where boundaries are close together and
+a late detection would otherwise be credited to the wrong one.
+
+Degenerate cases are decided deliberately: a strategy that flags nothing scores
+precision/recall/F1 of 0 rather than being undefined, so silence loses a
+comparison instead of dropping out of it. False alarms are reported per 1000
+steps so streams of different lengths compare fairly.
+
+**Next step:** Phase 5. Write `src/experiment.py` running all three strategies
+over the same stream — static (warm up once, never adapt), periodic (re-warm
+every N steps regardless), drift-triggered (re-warm only when the monitor fires
+on the anomaly score). All three share warm-up length and threshold quantile so
+the only difference is *when* they adapt. Then `scripts/run_smoke_test.py` for a
+fast local run, and first real metrics into `results/metrics.csv` plus figures.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both
