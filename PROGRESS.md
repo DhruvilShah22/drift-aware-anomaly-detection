@@ -30,7 +30,7 @@ system default 3.14 — `river` has no cp314 wheels.
 - [x] **Phase 0 — Setup:** git init, repo skeleton, requirements, .gitignore, PROGRESS.md
 - [x] **Phase 1 — Data:** `data_loader.py`, download and verify a real dataset, cache it
 - [x] **Phase 2 — Drift injection:** four drift shapes with known change points + tests
-- [ ] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
+- [x] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
 - [ ] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
 - [ ] **Phase 5 — Comparison run:** three-strategy experiment, first real metrics + figures
 - [ ] **Phase 6 — Streamlit demo:** live dashboard, export `results/demo.gif`
@@ -104,10 +104,51 @@ Verified on the real 9405-row anomaly-free SKAB recording at magnitude 3.0:
 sudden → point 4702; incremental → point 3762; gradual → point 3762 with 45.1%
 of rows shifted; recurring → points 2351/4702/7053 over 9404 usable rows.
 
-**Next step:** Phase 3. Write `src/models.py` (a `river.anomaly.HalfSpaceTrees`
-online wrapper plus a `sklearn.ensemble.IsolationForest` static baseline, behind
-one common `score_one`/`update` interface so `experiment.py` can swap them) and
-`src/detectors.py` (thin ADWIN/KSWIN wrappers that take a scalar per step and
-report `drift_detected`). HST expects features roughly in [0, 1], so the online
-path needs `preprocessing.MinMaxScaler` or `StandardScaler` in front of it —
-check which behaves better on a short run before committing to one.
+### 2026-07-21 — Phase 3 complete
+
+`src/models.py` and `src/detectors.py` are in. 38 tests pass.
+
+**Scaling decision (resolved by reading river's HST source, not guessing).** The
+plan was a `MinMaxScaler` in front of HST. That turns out to be wrong for this
+project: river's scalers adapt continuously, so they would absorb the drift
+before the model ever saw it — exactly the effect being measured. Instead I take
+per-feature min/max from the warm-up window (widened 10%) and pass them as HST's
+`limits`, then hold them fixed. Values that drift outside saturate into the
+boundary leaves and score as anomalous, which is the wanted behaviour.
+
+**Threshold decision.** HST normalises its raw mass score against a theoretical
+maximum that is never approached, so scores sit in a narrow offset band — in a
+probe, normal points scored ~0.94 and clearly anomalous ones ~0.995. An absolute
+threshold would be meaningless. The threshold is a high quantile (default 0.98)
+of warm-up scores. A rolling quantile was rejected for the same reason as the
+rolling scaler. Adaptation for every strategy means one thing: re-run `warm_up`
+on a recent window, rebuilding model, limits, and threshold together.
+
+**Measured detector behaviour** (5 seeds x 5000 stationary steps, plus a 6-sigma
+step at index 600). These are real numbers from a probe run:
+
+| detector | false alarms / 5000 stationary steps | reaction to the step | re-fires? |
+| --- | --- | --- | --- |
+| ADWIN (delta=0.002) | 0, 0, 0, 0, 0 | index 607, i.e. 7-step delay | no — exactly one alarm |
+| KSWIN (alpha=0.005) | 6, 4, 6, 6, 8 | index 628 | yes — also 883 |
+
+So ADWIN is essentially silent when nothing happens and needs no cooldown, while
+KSWIN reacts on a shorter window and pays for it with roughly one false alarm per
+700 steps plus repeat firing. The cooldown in `DriftMonitor` exists for KSWIN;
+ADWIN never engages it. This is a genuine trade-off to report in the write-up,
+not a defect — and it is why the evaluation measures false-alarm rate at all.
+
+Detectors monitor the **model's anomaly score**, not a raw sensor channel: a
+sensor shift only matters if it degrades the detector, and the score summarises
+all eight channels through the model's eyes.
+
+**Next step:** Phase 4. Write `src/evaluate.py` with prequential precision /
+recall / F1 for anomaly flags, plus drift-detection timing (delay from each true
+change point to the first detection after it, and missed change points) and
+false-alarm rate (detections that fall in no drift region). Test it on a toy
+stream with hand-computable answers before pointing it at anything real.
+
+Watch out: two Application Control blocks have now hit on first import of an
+unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both
+cleared on a plain retry. If a fresh import fails this way, retry once before
+investigating.
