@@ -1,3 +1,0 @@
-kind,magnitude,detector,n_change_points,n_detected,detection_rate,mean_delay,median_delay,n_detections_total,false_alarms_per_1k,alarm_rate,n_adaptations,n_steps,seconds,control_firings,excess_firings
-sudden,0.0,adwin,1,1,1.0,3.0,3.0,8,2.0,0.018571428571428572,8,3500,0.76,8,0
-sudden,3.0,adwin,1,1,1.0,3.0,3.0,9,2.2857142857142856,0.14114285714285715,9,3500,0.89,8,1
