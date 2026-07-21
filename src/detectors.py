@@ -20,7 +20,9 @@ holds off further adaptation until the model has had time to settle.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 
 from river import drift
 
@@ -46,8 +48,34 @@ class DriftMonitor:
     cooldown: int = DEFAULT_COOLDOWN
     detections: list[int] = field(default_factory=list)
     suppressed_at: list[int] = field(default_factory=list)
+    _factory: Callable[[], drift.base.DriftDetector] | None = None
     _step: int = 0
     _last_fired: int | None = None
+
+    def reset(self) -> None:
+        """Discard the detector's accumulated window and start a fresh one.
+
+        Called whenever the *meaning* of the monitored signal changes — in this
+        project, when the reference window the signal is standardised against is
+        refit after an adaptation. Otherwise the detector compares
+        post-adaptation values against a pre-adaptation window and can read the
+        refit itself as a change.
+
+        Honest note on its impact: I added this expecting it to cut down a
+        suspected feedback loop, and on the SKAB streams it changed the results
+        by nothing at all — adaptation counts were identical with and without
+        it. The repeated adaptations turned out to have a different cause (real
+        non-stationarity in the base recording; see PROGRESS.md). It is kept
+        because comparing against a stale reference is wrong regardless of
+        whether it happens to bite on this particular dataset, but it is not
+        load-bearing for any reported number.
+
+        Step counter, cooldown state, and detection history are all preserved;
+        only the statistical window is cleared.
+        """
+        if self._factory is None:
+            raise RuntimeError("this monitor was built without a factory and cannot reset")
+        self.detector = self._factory()
 
     def update(self, value: float) -> bool:
         step = self._step
@@ -86,14 +114,16 @@ def build_detector(
     sweep can pass `delta=...` for ADWIN or `alpha=...` for KSWIN.
     """
     if kind == "adwin":
-        detector: drift.base.DriftDetector = drift.ADWIN(**kwargs)
+        factory: Callable[[], drift.base.DriftDetector] = partial(drift.ADWIN, **kwargs)
     elif kind == "kswin":
         # KSWIN samples from its reference window, so it needs a seed to be
         # reproducible; ADWIN is deterministic and takes none.
-        detector = drift.KSWIN(seed=seed, **kwargs)
+        factory = partial(drift.KSWIN, seed=seed, **kwargs)
     else:
         raise ValueError(
             f"unknown detector kind {kind!r}; expected one of {DETECTOR_KINDS}"
         )
 
-    return DriftMonitor(kind=kind, detector=detector, cooldown=cooldown)
+    return DriftMonitor(
+        kind=kind, detector=factory(), cooldown=cooldown, _factory=factory
+    )
