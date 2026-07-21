@@ -27,6 +27,28 @@ Rebuilding always means the same operation: `warm_up` on the most recent
 `warmup_size` rows, which regenerates the model, its feature limits, and its
 threshold together.
 
+## Two things the first run got wrong
+
+Both were found by running the code, and both changed the design.
+
+**The retraining strategies hold the model frozen between rebuilds.** In the
+first version every HST strategy also called `learn_one` on every row. That made
+`periodic` and `drift-triggered` numerically identical to `online-no-reset` on
+the labelled stream: continuous learning had already absorbed everything, so the
+rebuild had nothing left to do. A "retrain on a schedule" policy that is also
+learning continuously is not really a retraining policy. Now only
+`online-no-reset` learns between rebuilds, which is what makes it the control.
+
+**The drift monitor watches the input, not the model's anomaly score.** Watching
+the score was the original plan and it is self-defeating for exactly the same
+reason: a continuously-learning model quietly accommodates the shift, its score
+distribution never moves, and the detector never fires. On the labelled stream
+that produced zero detections. The monitor now watches a fixed-reference
+statistic of the inputs — mean absolute z-score across sensors, standardised
+against the window the model was last built on. That reference is refreshed on
+adaptation, so it always answers "has the world moved since this model was
+built", which is the question that should trigger a rebuild.
+
 ## Two stream families, measuring different things
 
 The injected-drift streams are built on SKAB's anomaly-free recording, so they
@@ -57,6 +79,34 @@ from src.evaluate import anomaly_metrics, drift_metrics, summarise
 from src.models import DEFAULT_THRESHOLD_QUANTILE, build_model
 
 
+class ReferenceStatistic:
+    """A one-number summary of how far the input has moved from a reference window.
+
+    Standardises each sensor against the mean and standard deviation of the
+    window the current model was built on, then averages the absolute z-scores.
+    Sitting at roughly 0.8 for data resembling the reference and climbing as the
+    input moves away, it gives the drift detector a signal that does not quietly
+    adapt on its own — which is the whole point of monitoring it instead of the
+    model's anomaly score.
+    """
+
+    def __init__(self) -> None:
+        self._mean: np.ndarray | None = None
+        self._scale: np.ndarray | None = None
+
+    def refit(self, frame: pd.DataFrame) -> None:
+        self._mean = frame.to_numpy().mean(axis=0)
+        scale = frame.to_numpy().std(axis=0)
+        # A sensor that never moved in the reference window would divide by zero;
+        # give it unit scale so it contributes its raw deviation instead.
+        self._scale = np.where(scale > 0, scale, 1.0)
+
+    def value(self, row: np.ndarray) -> float:
+        if self._mean is None or self._scale is None:
+            raise RuntimeError("refit must be called before value")
+        return float(np.mean(np.abs((row - self._mean) / self._scale)))
+
+
 @dataclass(frozen=True)
 class Strategy:
     """One adaptation policy."""
@@ -67,6 +117,10 @@ class Strategy:
     retrain_every: int = 1000
     detector_kind: str = "adwin"
     detector_kwargs: dict = field(default_factory=dict)
+    # Whether the model keeps learning between rebuilds. Only the online control
+    # does; a retraining policy that also learns continuously is not really a
+    # retraining policy, and measurably collapses into the control.
+    learn_online: bool = False
 
     def __post_init__(self) -> None:
         if self.adapt not in ("never", "periodic", "drift"):
@@ -76,7 +130,7 @@ class Strategy:
 def default_strategies(detector_kind: str = "adwin") -> list[Strategy]:
     return [
         Strategy("static", model_kind="iforest", adapt="never"),
-        Strategy("online-no-reset", model_kind="hst", adapt="never"),
+        Strategy("online-no-reset", model_kind="hst", adapt="never", learn_online=True),
         Strategy("periodic", model_kind="hst", adapt="periodic", retrain_every=1000),
         Strategy("drift-triggered", model_kind="hst", adapt="drift", detector_kind=detector_kind),
     ]
@@ -150,8 +204,11 @@ def run_strategy(
             **strategy.detector_kwargs,
         )
 
+    reference = ReferenceStatistic()
+
     started = time.perf_counter()
     model.warm_up(frame.iloc[:warmup])
+    reference.refit(frame.iloc[:warmup])
 
     scores = np.full(n, np.nan)
     flags = np.zeros(n, dtype=int)
@@ -179,6 +236,7 @@ def run_strategy(
         )
 
     records = frame.to_dict(orient="records")
+    values = frame.to_numpy()
     recent: deque[dict] = deque(records[:warmup], maxlen=warmup)
 
     for i in range(warmup, n):
@@ -189,7 +247,8 @@ def run_strategy(
         thresholds[i] = model.threshold
         flags[i] = int(score > model.threshold)
 
-        model.learn_one(x)
+        if strategy.learn_online:
+            model.learn_one(x)
         recent.append(x)
 
         should_adapt = False
@@ -197,12 +256,16 @@ def run_strategy(
             should_adapt = (i - warmup) > 0 and (i - warmup) % strategy.retrain_every == 0
         elif strategy.adapt == "drift":
             assert monitor is not None
-            if monitor.update(score):
+            # Watch the input's distance from the reference window, not the
+            # model's own score: a learning model hides the shift from itself.
+            if monitor.update(reference.value(values[i])):
                 detections.append(i)
                 should_adapt = True
 
         if should_adapt:
-            model.warm_up(pd.DataFrame(list(recent), columns=frame.columns))
+            window = pd.DataFrame(list(recent), columns=frame.columns)
+            model.warm_up(window)
+            reference.refit(window)
             adaptations.append(i)
 
     return StrategyRun(
