@@ -1,35 +1,189 @@
 # Concept-Drift-Aware Streaming Anomaly Detector
 
-Anomaly detection on sensor streams whose definition of "normal" keeps moving.
+Anomaly detection for sensor streams whose definition of "normal" keeps moving —
+with a live demo showing what each adaptation strategy actually does.
 
-This project is under construction. See [PROGRESS.md](PROGRESS.md) for the current
-state and the phase checklist.
+![Live demo of the dashboard replaying a sensor stream](results/demo.gif)
+
+*Real output from the Streamlit dashboard. The stream is replayed left to right;
+green dots are flagged points, the dashed red line is an injected change, and the
+lower panel is alarm density. The detector notices the change **9 rows** after it
+happens, alarms while the model is stale, then settles once it rebuilds.*
 
 ## The problem
 
-An anomaly detector trained once on a sensor stream degrades as the process it
-watches changes. Left alone, it drifts into one of two failure modes: it floods
-the operator with false alarms because normal operation has shifted, or it
-quietly adapts to a fault and stops reporting it. The interesting question is
-not "can we detect anomalies" but "when should the detector update itself".
+An anomaly detector trained once on a sensor stream goes wrong in one of two
+directions as the process it watches changes.
 
-## What it does
+- **It never updates.** Normal operation shifts, and every reading now looks
+  anomalous. On the stream above, a detector fitted once flags **93% of all
+  points** — an alarm system nobody will keep listening to.
+- **It updates constantly.** The model absorbs the change into its own idea of
+  normal within a few hundred rows and goes quiet, flagging **1%**. A fault that
+  arrives gradually is learned rather than reported.
 
-Replays a sensor stream and compares three adaptation strategies side by side:
+Both are easy to build by accident and neither is obvious from a single accuracy
+number. The interesting question is not "can we detect anomalies" but **when
+should the detector update itself**.
 
-1. **Static** — trained once, never updated.
-2. **Blind periodic retrain** — updates on a fixed schedule.
-3. **Drift-triggered** — a drift detector decides when to adapt.
+## What this does
 
-A Streamlit dashboard plays the stream through and shows the signal, detected
-drift points, and flagged anomalies live for each strategy.
+Replays a sensor stream through four policies that differ *only* in when the
+model is rebuilt, and measures the difference:
 
-## Setup
+| policy | behaviour |
+| --- | --- |
+| **static** | Isolation Forest fitted once, never updated. The naive baseline. |
+| **online-no-reset** | Keeps learning every step, never explicitly rebuilt. A control. |
+| **periodic** | Rebuilt on a fixed schedule, whether or not anything changed. |
+| **drift-triggered** | Rebuilt only when a drift detector says the input has moved. |
+
+The two controls bracket the problem — one floods, one goes silent — so the
+question becomes whether reacting to *detected* change lands anywhere better.
+
+Built on [`river`](https://riverml.xyz) (Half-Space Trees, ADWIN, KSWIN) and
+scikit-learn, over [SKAB](https://github.com/waico/SKAB), a labelled industrial
+sensor benchmark.
+
+## Quickstart
 
 ```bash
-python -m venv .venv
-.venv/Scripts/activate      # Windows; use source .venv/bin/activate elsewhere
 pip install -r requirements.txt
+python scripts/download_data.py      # fetches and verifies SKAB
+streamlit run app/streamlit_app.py   # the demo
 ```
 
-Built and tested on Python 3.13.
+The demo reads a small committed file, so it starts instantly and needs no prior
+run. To reproduce the numbers below:
+
+```bash
+python scripts/run_smoke_test.py     # ~1s, proves the pipeline end to end
+python scripts/run_experiment.py     # ~100s, writes results/metrics.csv + figures
+python scripts/run_sweep.py          # ~200s, writes results/sweep.csv
+```
+
+Tested on Python 3.13. On Windows, launch the app with
+`python -m streamlit run app/streamlit_app.py`.
+
+## Results
+
+### Alarm volume when normal shifts
+
+Streams built by injecting a known 3 sd change into SKAB's anomaly-free
+recording. These contain no true anomalies, so **every flag is a false alarm** —
+the number to minimise. Delay is how long the drift detector took to react.
+
+| stream | static | online-no-reset | periodic | drift-triggered | detection delay |
+| --- | --- | --- | --- | --- | --- |
+| sudden | 93.4% | 1.0% | 1.4% | 9.2% | 9 rows |
+| incremental | 93.3% | 0.7% | 0.7% | 0.9% | 181 rows |
+| gradual | 93.4% | 1.3% | 4.3% | 3.5% | 245 rows |
+| recurring | 93.4% | 1.0% | 3.9% | 22.2% | 20 rows |
+
+The static baseline is unusable once the process moves. `drift-triggered` alarms
+more than `periodic` on sudden and recurring drift because it deliberately keeps
+alarming through the transition until it rebuilds — visible as the spike in the
+demo above.
+
+### Anomaly detection quality
+
+On 18,160 rows of labelled SKAB `valve1` recordings, of which 17,160 are scored
+after warm-up. 34.4% of those are anomalous. **Read the last column first.**
+
+| policy | F1 | alarm rate | vs flag-everything (0.512) |
+| --- | --- | --- | --- |
+| static | 0.513 | 99.8% | +0.001 |
+| online-no-reset | 0.357 | 29.3% | −0.156 |
+| **periodic** | **0.544** | 52.3% | **+0.032** |
+| drift-triggered | 0.502 | 50.9% | −0.010 |
+
+At a 34.4% base rate, a detector that flags *every single point* scores F1
+**0.512**. The static baseline's 0.513 clears that by 0.001 — which is to say it
+flags 99.8% of points and achieves nothing beyond the trivial strategy.
+`periodic` is the only policy meaningfully above the line.
+
+**The defensible claim here is about alarm volume, not F1.** `periodic` and
+`drift-triggered` reach comparable or better F1 while alarming on roughly half
+as many points as the static baseline. Point-wise F1 is a weak discriminator on
+this data and is not evidence of much on its own.
+
+### How large must a change be to be noticed
+
+From a 40-run sweep (4 shapes x 5 magnitudes x 2 detectors,
+`notebooks/kaggle_experiment.ipynb`). Mean detection delay in rows, ADWIN:
+
+| shape | 0.0 (control) | 1.0 sd | 2.0 sd | 3.0 sd | 5.0 sd |
+| --- | --- | --- | --- | --- | --- |
+| sudden | 393 | 9 | 9 | 9 | 9 |
+| incremental | 373 | 277 | 245 | 181 | 117 |
+| gradual | 373 | 245 | 245 | 245 | 245 |
+| recurring | 201 | 20 | 20 | 20 | 20 |
+
+Sudden and recurring changes are caught almost immediately even at 1 sd.
+Incremental drift is the case where magnitude genuinely matters. Gradual drift
+resists it entirely — early in the transition the new regime looks like scattered
+outliers rather than a shift in level. ADWIN beat KSWIN on both delay and false
+alarms (~1.9 vs ~2.8 per 1000 steps).
+
+## Limitations
+
+These are real constraints on what the numbers above can support.
+
+- **SKAB's anomaly-free recording is not stationary.** It has no annotated
+  faults, but the process drifts on its own. Running with *no* injected drift
+  still produces 18 adaptations, at nearly the same positions as with a 3 sd step
+  injected. The injected change adds essentially one detection.
+- **Because of that, false-alarm counts are an upper bound**, not a measurement.
+  Some are the detector correctly noticing real process change I have no ground
+  truth for.
+- **Detection *rate* is uninformative on this data** and is deliberately not
+  reported as a result. It comes out at 1.0 for every magnitude including the
+  zero control, because a firing always lands within the matching horizon of an
+  arbitrary point.
+- **The labelled stream is concatenated** from 16 separate valve1 recordings to
+  get usable length. The joins are genuine regime changes of unknown size, so
+  that stream is used for anomaly quality only, never for drift timing.
+- **One dataset, one sensor domain.** Nothing here shows the thresholds or
+  detector settings transfer to another process.
+- **Thresholds are calibrated per stream family** (0.98 quantile where anomalies
+  are rare, 0.50 where they are a third of the data). That is a deployment-time
+  choice, not something the method decides for itself.
+- **`drift-triggered` does not win the headline comparison.** `periodic` edges
+  it on labelled F1, and both controls beat it on raw alarm volume. Its
+  advantage is reacting to change on evidence rather than on a schedule, and
+  catching a sudden shift in 9 rows; that is a narrower claim than "adaptive
+  detection works better", and it is the one the data supports.
+
+## How it works
+
+The online model is `river`'s Half-Space Trees. Two details matter:
+
+**Feature ranges and thresholds are fixed at warm-up, not rolling.** The obvious
+build uses a `MinMaxScaler` and a rolling quantile threshold, but both adapt
+continuously and would absorb the drift before the model ever saw it — hiding
+the exact effect being measured. Instead both are taken from the warm-up window
+and held; adaptation means re-running warm-up, which rebuilds model, ranges and
+threshold together.
+
+**The drift detector watches the input, not the model's anomaly score.** Watching
+the score is self-defeating: a learning model accommodates the shift, so its
+score distribution never moves and the detector never fires. It monitors mean
+absolute z-score of the sensors against the window the model was last built on.
+
+## Layout
+
+```
+src/           data_loader, drift_injection, models, detectors, evaluate, experiment, sweep
+app/           streamlit_app.py
+scripts/       download_data, run_smoke_test, run_experiment, run_tuning, run_sweep, GIF export
+notebooks/     kaggle_experiment.ipynb
+results/       metrics.csv, sweep.csv, tuning.csv, figures/, demo.gif
+tests/         64 tests
+```
+
+`results/demo.gif` is a screen capture of the running dashboard.
+`results/demo_animation.gif` shows all four strategies together and regenerates
+from committed data with `python scripts/export_demo_gif.py` — no browser needed.
+
+Development log, including the design mistakes found by running the code, is in
+[PROGRESS.md](PROGRESS.md).

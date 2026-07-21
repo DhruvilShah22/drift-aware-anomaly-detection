@@ -38,7 +38,7 @@ system default 3.14 — `river` has no cp314 wheels.
       *(done early — the first run was visibly miscalibrated and the table would
       have been misleading to leave standing)*
 - [x] **Phase 8 — Kaggle notebook:** package the heavy run
-- [ ] **Phase 9 — Write-up:** finalize README, push
+- [x] **Phase 9 — Write-up:** finalize README, push
 
 ## Log
 
@@ -347,10 +347,47 @@ control) is near zero or **negative** in most conditions. Injecting drift change
 *when* the detector fires far more than *how often*. Negative values are left
 unclipped on purpose — clipping them to zero would quietly overstate the method.
 
-**Next step:** Phase 9, the README. Lead with `demo.gif`, one-line pitch,
-plain-language problem, one or two run commands, the results table **with the
-flag-everything baseline beside it**, and the limitations from this file. Do not
-overclaim the labelled-stream F1, and do not report detection rate as a result.
+### 2026-07-21 — Phase 9 complete. All phases done.
+
+README written and checked against `results/metrics.csv` line by line rather
+than from memory. That caught two errors worth recording:
+
+1. I had the flag-everything baseline as **0.516**; it is **0.5122**. The base
+   rate is 34.4% over the *scored* region (17,160 rows after warm-up), not 34.7%
+   over the full 18,160.
+2. Consequently I had written that static does not beat the trivial baseline. It
+   does — by **0.0009**. The table now gives the signed margin for each policy
+   instead of a yes/no, which is both accurate and more informative: static
+   +0.001, periodic +0.032, drift-triggered −0.010, online-no-reset −0.156.
+
+The README states plainly that `drift-triggered` does **not** win the headline
+comparison — `periodic` edges it on labelled F1. Its defensible advantage is
+reacting on evidence rather than schedule, and a 9-row reaction to a sudden
+shift. Overclaiming here would have been easy and wrong.
+
+Checked: no forbidden terms, no emoji, no broken relative links, 64 tests pass,
+smoke test passes in 1.0s.
+
+## Definition of done — verified
+
+- [x] installs from `requirements.txt` (Python 3.13)
+- [x] `python scripts/run_smoke_test.py` runs end to end in ~1s
+- [x] `streamlit run app/streamlit_app.py` launches from committed data
+- [x] README shows the demo GIF and real results tables
+- [x] every number traces to a committed CSV produced by committed code
+
+## If picking this up again
+
+Ideas deliberately left undone rather than half-built:
+
+- A second dataset (NAB) would test whether any of the calibration transfers.
+  Right now nothing shows it does.
+- Event-level rather than point-wise anomaly scoring would make F1 a real
+  discriminator on `valve1`; the 34% base rate and long contiguous fault blocks
+  are what make point-wise F1 nearly useless there.
+- The gradual-drift delay (flat at 245 rows regardless of magnitude) is the
+  clearest open weakness. A detector on a different statistic — variance or a
+  two-window KS test on residuals — might do better where ADWIN cannot.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both
