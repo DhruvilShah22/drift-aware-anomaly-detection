@@ -23,3 +23,6 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Browser automation scratch output from capturing the dashboard clip
+.playwright-mcp/

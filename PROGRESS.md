@@ -33,7 +33,7 @@ system default 3.14 — `river` has no cp314 wheels.
 - [x] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
 - [x] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
 - [x] **Phase 5 — Comparison run:** three-strategy experiment, first real metrics + figures
-- [ ] **Phase 6 — Streamlit demo:** live dashboard, export `results/demo.gif`
+- [x] **Phase 6 — Streamlit demo:** live dashboard, export `results/demo.gif`
 - [x] **Phase 7 — Light tuning:** small sweep, regenerate table and figures
       *(done early — the first run was visibly miscalibrated and the table would
       have been misleading to leave standing)*
@@ -254,13 +254,59 @@ The defensible claim is about **alarm volume at comparable F1** (periodic and
 drift-triggered reach similar F1 while alarming on half as many points), not
 about F1 supremacy. Do not overclaim this in the README.
 
-**Next step:** Phase 6, the Streamlit demo — the deliverable this project is
-judged on. Read cached runs from `data/cache/runs_full.pkl` rather than
-recomputing, so it starts instantly on a weak laptop. Selectors for drift shape
-and strategy, a replay control, and live signal / drift markers / flagged points
-with a running alarm-rate and F1 readout. Then export the GIF two ways as
-agreed: a matplotlib animation from real run output, plus a Playwright screen
-capture of the live dashboard.
+### 2026-07-21 — Phase 6 complete
+
+`app/streamlit_app.py` runs, was driven end to end in a real browser, and both
+clips are exported. Launch it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run app/streamlit_app.py
+```
+
+**Use `python -m streamlit`, not `streamlit.exe`.** The console script is blocked
+by the same Windows Application Control policy that hit the river and sklearn
+DLLs; going through the module works.
+
+#### Demo data is committed, not regenerated
+
+The app reads `data/demo/demo_runs.npz` (1.06 MB, committed), packed by
+`scripts/build_demo_cache.py` from the full run. `data/cache/runs_full.pkl` is
+9.5 MB and gitignored, so a fresh clone would have had nothing to replay. The
+npz holds float32 sensor traces, int8 flags, and the change/adaptation
+positions — all genuine model output, only re-packed.
+
+#### Two bugs found by actually driving the UI
+
+1. **The position slider froze at 1000 during playback.** A keyed Streamlit
+   slider keeps its own state and ignores the `value` argument on rerun. Dropped
+   the key; it now follows the playhead and dragging still works when paused.
+2. **The whole dashboard rendered permanently dimmed.** Streamlit fades stale
+   elements while a rerun is in flight, and playback reruns continuously, so it
+   never stopped fading. Fixed with a CSS override on `[data-stale="true"]`.
+   This was visible in the first capture attempt as a grey, washed-out image —
+   worth knowing it was a real UI defect, not a screenshot artefact.
+
+#### Both clips exported, and they are not the same thing
+
+- `results/demo_animation.gif` (0.96 MB, 90 frames) — **the reproducible one.**
+  `python scripts/export_demo_gif.py` regenerates it from committed data with no
+  browser. Shows all four strategies stacked, ending at static 93.4% of points
+  flagged, online 1.0%, periodic 1.4%, drift-triggered 9.2%.
+- `results/demo.gif` (0.15 MB, 11 frames) — **a real screen capture** of the
+  live dashboard, driven via CDP on port 9222. `scripts/stitch_dashboard_gif.py`
+  does the stitching; the capture half needs a browser and a running app, so it
+  is not unattended-reproducible, and the script says so plainly.
+
+A palette detail worth keeping: the shared GIF palette has to be built from a
+montage of *all* frames. Built from frame 1 alone it misses the colours that
+only appear later and the plot area comes out grey.
+
+**Next step:** Phase 8, the Kaggle notebook. Package the heavy run to read SKAB
+from a Kaggle dataset (or fetch from GitHub as `data_loader` already does) and
+write to `/kaggle/working`. Then Phase 9, the README — lead with `demo.gif`,
+one-line pitch, plain-language problem, one or two run commands, the results
+table **with the flag-everything baseline alongside it**, and the limitations
+already written up above. Do not overclaim the labelled-stream F1.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both
