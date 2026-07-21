@@ -37,7 +37,7 @@ system default 3.14 — `river` has no cp314 wheels.
 - [x] **Phase 7 — Light tuning:** small sweep, regenerate table and figures
       *(done early — the first run was visibly miscalibrated and the table would
       have been misleading to leave standing)*
-- [ ] **Phase 8 — Kaggle notebook:** package the heavy run
+- [x] **Phase 8 — Kaggle notebook:** package the heavy run
 - [ ] **Phase 9 — Write-up:** finalize README, push
 
 ## Log
@@ -301,12 +301,56 @@ A palette detail worth keeping: the shared GIF palette has to be built from a
 montage of *all* frames. Built from frame 1 alone it misses the colours that
 only appear later and the plot area comes out grey.
 
-**Next step:** Phase 8, the Kaggle notebook. Package the heavy run to read SKAB
-from a Kaggle dataset (or fetch from GitHub as `data_loader` already does) and
-write to `/kaggle/working`. Then Phase 9, the README — lead with `demo.gif`,
-one-line pitch, plain-language problem, one or two run commands, the results
-table **with the flag-everything baseline alongside it**, and the limitations
-already written up above. Do not overclaim the labelled-stream F1.
+### 2026-07-21 — Phase 8 complete
+
+`src/sweep.py`, `scripts/run_sweep.py`, `notebooks/kaggle_experiment.ipynb`.
+64 tests pass. The full sweep — 4 shapes x 5 magnitudes x 2 detectors, 40 runs —
+took 202s locally; `results/sweep.csv` holds the real output.
+
+The sweep lives in `src/` and the notebook is a thin driver, so Kaggle runs the
+same tested code rather than a pasted copy. The notebook takes SKAB from an
+attached Kaggle dataset if it finds one under `/kaggle/input`, otherwise
+downloads from GitHub, and writes to `/kaggle/working`. Its analysis and
+plotting cells were executed locally against the real sweep output before
+committing — no untested notebook code.
+
+#### The control changed the conclusion
+
+**`detection_rate` is 1.0 at every magnitude, including 0.0 where nothing was
+injected.** The base recording drifts enough on its own that some firing always
+lands within the matching horizon of an arbitrary point. Reported alone it would
+have looked like a flawless detector. It is worthless on this data and the
+notebook says so outright.
+
+What *is* informative is **delay**, and it responds clearly (ADWIN):
+
+| shape | mag 0.0 (control) | 1.0 | 2.0 | 3.0 | 5.0 |
+| --- | --- | --- | --- | --- | --- |
+| sudden | 393 | 9 | 9 | 9 | 9 |
+| incremental | 373 | 277 | 245 | 181 | 117 |
+| gradual | 373 | 245 | 245 | 245 | 245 |
+| recurring | 201 | 20 | 20 | 20 | 20 |
+
+- **Sudden and recurring saturate instantly** — caught in 9 and 20 rows even at
+  1 sd, and a bigger change does not help because it is already immediate.
+- **Incremental is the one where magnitude genuinely matters**, falling
+  monotonically 277 → 117 as the ramp steepens.
+- **Gradual defeats magnitude entirely**, flat at 245 regardless of size —
+  early in the transition the new regime looks like sporadic outliers rather
+  than a change in level. This is the shape the injector was written to be hard,
+  and it is.
+- **ADWIN beats KSWIN on both axes**: shorter delays, and ~1.9 vs ~2.8 false
+  alarms per 1000 steps.
+
+Honest limitation, recorded in the notebook: `excess_firings` (firings above the
+control) is near zero or **negative** in most conditions. Injecting drift changes
+*when* the detector fires far more than *how often*. Negative values are left
+unclipped on purpose — clipping them to zero would quietly overstate the method.
+
+**Next step:** Phase 9, the README. Lead with `demo.gif`, one-line pitch,
+plain-language problem, one or two run commands, the results table **with the
+flag-everything baseline beside it**, and the limitations from this file. Do not
+overclaim the labelled-stream F1, and do not report detection rate as a result.
 
 Watch out: two Application Control blocks have now hit on first import of an
 unsigned DLL (`river/_river_rust`, then sklearn's `_radius_neighbors`). Both
