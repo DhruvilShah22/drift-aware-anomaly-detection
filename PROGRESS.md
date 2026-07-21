@@ -28,7 +28,7 @@ system default 3.14 — `river` has no cp314 wheels.
 ## Phase checklist
 
 - [x] **Phase 0 — Setup:** git init, repo skeleton, requirements, .gitignore, PROGRESS.md
-- [ ] **Phase 1 — Data:** `data_loader.py`, download and verify a real dataset, cache it
+- [x] **Phase 1 — Data:** `data_loader.py`, download and verify a real dataset, cache it
 - [ ] **Phase 2 — Drift injection:** four drift shapes with known change points + tests
 - [ ] **Phase 3 — Model & detectors:** online HST, static IsolationForest, ADWIN/KSWIN wrappers
 - [ ] **Phase 4 — Evaluation:** F1, detection timing, false-alarm rate, tested on a toy stream
@@ -56,9 +56,35 @@ Decisions made up front:
   real experiment output (the reliable, reproducible artifact), plus a real
   screen capture of the Streamlit dashboard if that route works cleanly.
 
-**Next step:** Phase 1. Write `src/data_loader.py` and `scripts/download_data.py`,
-then attempt SKAB (Skoltech Anomaly Benchmark) from its public GitHub repo.
-Print shape/columns/label balance to prove it actually loaded, cache the parsed
-frames under `data/cache/`, and commit a small sample for the demo. If SKAB is
-unreachable or its schema differs from expectation, stop and report rather than
-substituting a different source.
+### 2026-07-21 — Phase 1 complete
+
+SKAB loads. It is reachable, its schema matches, and the numbers below come from
+an actual `python scripts/download_data.py` run:
+
+| group | files | recording used | rows | anomalous |
+| --- | --- | --- | --- | --- |
+| valve1 | 16 | `valve1/0.csv` | 1147 | 401 (35.0%) |
+| valve2 | 4 | `valve2/0.csv` | 1125 | 394 (35.0%) |
+| other | 14 | `other/1.csv` | 745 | 188 (25.2%) |
+| anomaly-free | 1 | `anomaly-free.csv` | 9405 | 0 (unlabelled by design) |
+
+Schema details worth remembering: SKAB CSVs are **semicolon-separated**, indexed
+by a `datetime` column, with 8 sensor channels plus `anomaly` and `changepoint`
+label columns. The `anomaly-free` recording ships without label columns, so the
+loader synthesises an all-zero label series for it.
+
+The 9405-row anomaly-free run is the base signal for Phase 2's injected-drift
+streams — no annotated faults in it, so anything the injectors add is known
+exactly. Labelled recordings are much shorter (~1000 rows each).
+
+Caching: raw CSVs land in `data/raw/` and parsed frames in `data/cache/` (both
+gitignored); 2000-row slices go to `data/sample/` and **are** committed, so the
+Streamlit demo and tests run with no network access.
+
+**Next step:** Phase 2. Write `src/drift_injection.py` with the four drift
+shapes — sudden (step), incremental (ramp), gradual (interleaved regimes),
+recurring (seasonal) — each returning the modified stream plus the exact indices
+where drift was applied, so detection timing can be measured against ground
+truth. Build them on top of `load_anomaly_free()`. Cover each shape with pytest
+tests in `tests/test_drift_injection.py` asserting the signal actually changes at
+the declared points and nowhere else.
