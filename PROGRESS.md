@@ -552,6 +552,42 @@ matching `results/metrics.csv`. The addition is purely additive — the 15 exist
 cells are byte-identical. It needs internet enabled on Kaggle (or valve1 in an
 attached dataset), since `labelled_scenario` downloads the labelled recordings.
 
+### 2026-07-22 — Variance detector for gradual drift (adwin_var)
+
+`src/detectors.py` gains `RollingDispersion` and a new `adwin_var` kind: ADWIN
+fed the trailing variance of the monitored signal instead of its level. Added to
+the sweep (`DEFAULT_DETECTORS`), so `results/sweep.csv` is now 60 runs (was 40);
+the notebook detectors, plots and findings updated to match. 116 tests pass
+(was 108). This closes the "gradual-drift delay" item below.
+
+**Why variance.** Gradual drift interleaves the old and new regime with rising
+probability, so early in the transition rows flip between them and the signal
+grows *spiky* — its variance climbs before its mean does. ADWIN watches the mean
+and is flat at 245 rows regardless of magnitude; a variance-fed ADWIN sees the
+spikiness. Confirmed first in a standalone diagnostic, then in the full sweep.
+
+**Measured (full sweep, mean delay in rows):**
+
+| shape | detector | 1.0 | 2.0 | 3.0 | 5.0 |
+| --- | --- | --- | --- | --- | --- |
+| gradual | adwin | 245 | 245 | 245 | 245 |
+| gradual | adwin_var | 213 | 117 | **85** | **85** |
+| incremental | adwin | 277 | 245 | 181 | 117 |
+| incremental | adwin_var | miss | miss | miss | miss |
+
+- **The win:** gradual delay finally responds to magnitude, 85 vs 245 at 3 sd.
+- **The cost, not hidden:** adwin_var is **blind to incremental** — a smooth ramp
+  moves the mean without changing the spread, so it detects nothing (0/1 at every
+  magnitude). There is no single best detector: mean owns the smooth ramp,
+  variance owns the interleaved gradual case. Documented as complements.
+- **False alarms:** adwin_var is the quietest of the three, **0.28 per 1000 steps**
+  vs adwin 1.93 and kswin 2.80, and fires twice on the drift-free control vs
+  adwin's 18. On smooth signals a rolling variance is stable; that is why it is
+  quiet here even though on raw white noise it is chattier than ADWIN (the unit
+  test records that worst case honestly).
+- On sudden and recurring the three are close; ADWIN a touch faster at 1 sd. ADWIN
+  stays the default; adwin_var is the tool for when gradual drift is the concern.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
@@ -560,9 +596,11 @@ Ideas deliberately left undone rather than half-built:
   Recall still saturates for the best strategy per stream; genuinely exercising
   the recall axis within a single strategy would need a stream where even a good
   detector misses whole events, which neither SKAB nor NAB provides.
-- The gradual-drift delay (flat at 245 rows regardless of magnitude) is the
-  clearest open weakness. A detector on a different statistic — variance or a
-  two-window KS test on residuals — might do better where ADWIN cannot.
+- The gradual-drift weakness is **addressed** by `adwin_var` (2026-07-22, above).
+  The open follow-on: a *combined* mean-or-variance detector would catch both the
+  smooth ramp and the interleaved case in one monitor. It was left un-built
+  because ORing the two inherits ADWIN's chattiness on the base recording's
+  background drift, and measuring that trade-off honestly is its own small study.
 - The old note here read that `ec2_request_latency` and `rogue_agent_key_updown`
   are "unsolved by any configuration" — that was a point-wise-scoring artefact,
   now retracted: both clear flag-everything at event level. What remains genuinely

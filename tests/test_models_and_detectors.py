@@ -163,7 +163,15 @@ def test_detectors_react_promptly_to_a_real_shift(kind):
 # These bounds are set from measured behaviour, not from the papers: over five
 # seeds of 5000 stationary steps, ADWIN fired 0 times every time and KSWIN fired
 # 4-8 times. They are here to catch a regression, not to flatter either detector.
-STATIONARY_FALSE_ALARM_BUDGET = {"adwin": 0, "kswin": 15}
+#
+# adwin_var is the chattiest on *white noise*: the sampling fluctuation of a
+# rolling variance is itself a signal ADWIN reacts to (15-22 over five seeds).
+# That is the honest cost of watching spread, and it looks worse here than in
+# use — on the smoother reference statistic the experiment actually monitors, its
+# variance is stable except during drift, so on SKAB it is far quieter than the
+# mean detector (see the sweep in PROGRESS.md). This budget is a regression guard
+# on the worst case, not a claim about its operating behaviour.
+STATIONARY_FALSE_ALARM_BUDGET = {"adwin": 0, "kswin": 15, "adwin_var": 25}
 
 
 @pytest.mark.parametrize("kind", DETECTOR_KINDS)
@@ -241,3 +249,73 @@ def test_reset_requires_a_factory():
 def test_build_detector_rejects_unknown_kinds():
     with pytest.raises(ValueError, match="unknown detector kind"):
         build_detector("page-hinkley")
+
+
+# --- the dispersion transform and the adwin_var detector -------------------
+
+def test_rolling_dispersion_reports_windowed_variance():
+    from src.detectors import RollingDispersion
+
+    disp = RollingDispersion(window=3)
+    assert disp(5.0) == 0.0, "one point has no dispersion yet"
+    # After [5, 7]: variance of two points about their mean (6) is 1.0.
+    assert disp(7.0) == pytest.approx(1.0)
+    # Window is 3; feeding a fourth value drops the first.
+    disp(9.0)  # buffer now [5, 7, 9]
+    assert disp(11.0) == pytest.approx(np.var([7.0, 9.0, 11.0]))
+
+
+def test_rolling_dispersion_reset_and_bad_window():
+    from src.detectors import RollingDispersion
+
+    disp = RollingDispersion(window=5)
+    disp(1.0)
+    disp(9.0)
+    disp.reset()
+    assert disp(3.0) == 0.0, "after reset the window is empty again"
+
+    with pytest.raises(ValueError, match="window must be at least 2"):
+        RollingDispersion(window=1)
+
+
+def test_adwin_var_catches_a_spread_change_that_the_mean_detector_misses():
+    """The reason adwin_var exists: a change in spread with the mean held fixed.
+
+    This is the gradual-drift case in miniature — the signal starts flipping
+    between two values around a constant mean, so its location never moves but its
+    variance jumps. The plain mean detector should stay silent; adwin_var should
+    fire.
+    """
+    rng = np.random.default_rng(3)
+    # First half: tight around 0. Second half: same mean, far wider spread.
+    stream = [float(rng.normal(0.0, 0.05)) for _ in range(600)]
+    stream += [float(rng.normal(0.0, 3.0)) for _ in range(600)]
+
+    mean_det = build_detector("adwin", cooldown=0)
+    var_det = build_detector("adwin_var", cooldown=0)
+    mean_fired = [i for i, v in enumerate(stream) if mean_det.update(v) and i >= 600]
+    var_fired = [i for i, v in enumerate(stream) if var_det.update(v) and i >= 600]
+
+    assert not mean_fired, "a pure spread change should not move the mean detector"
+    assert var_fired, "adwin_var should catch the spread change"
+    assert var_fired[0] - 600 < 200
+
+
+def test_adwin_var_attaches_a_transform_and_passes_its_window():
+    from src.detectors import RollingDispersion
+
+    monitor = build_detector("adwin_var", window=17)
+    assert isinstance(monitor.transform, RollingDispersion)
+    assert monitor.transform.window == 17
+    # The plain detectors carry no transform.
+    assert build_detector("adwin").transform is None
+
+
+def test_adwin_var_reset_clears_the_transform_window():
+    monitor = build_detector("adwin_var", cooldown=0)
+    for value in _step_stream():
+        monitor.update(value)
+    assert monitor.transform is not None and len(monitor.transform._buffer) > 0
+
+    monitor.reset()
+    assert len(monitor.transform._buffer) == 0, "reset must clear the transform's window"

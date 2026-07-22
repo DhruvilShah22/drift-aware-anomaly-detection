@@ -146,7 +146,7 @@ sparse anomalies is where event recall would carry its own weight.
 
 ### How large must a change be to be noticed
 
-From a 40-run sweep (4 shapes x 5 magnitudes x 2 detectors,
+From a 60-run sweep (4 shapes x 5 magnitudes x 3 detectors,
 `notebooks/kaggle_experiment.ipynb`). Mean detection delay in rows, ADWIN:
 
 | shape | 0.0 (control) | 1.0 sd | 2.0 sd | 3.0 sd | 5.0 sd |
@@ -158,9 +158,37 @@ From a 40-run sweep (4 shapes x 5 magnitudes x 2 detectors,
 
 Sudden and recurring changes are caught almost immediately even at 1 sd.
 Incremental drift is the case where magnitude genuinely matters. Gradual drift
-resists it entirely — early in the transition the new regime looks like scattered
-outliers rather than a shift in level. ADWIN beat KSWIN on both delay and false
-alarms (~1.9 vs ~2.8 per 1000 steps).
+resists ADWIN entirely — the delay sits at 245 rows no matter how big the change,
+because early in the transition individual rows flip between the old and new
+regime, so the signal grows *spiky* before its mean has moved. A location-based
+detector cannot see that.
+
+#### A variance detector for the gradual case
+
+`adwin_var` feeds ADWIN the trailing **variance** of the signal instead of its
+level, so it reacts to that early spikiness. On gradual drift it does what ADWIN
+cannot — the delay finally responds to magnitude:
+
+| shape | detector | 1.0 sd | 2.0 sd | 3.0 sd | 5.0 sd |
+| --- | --- | --- | --- | --- | --- |
+| gradual | ADWIN | 245 | 245 | 245 | 245 |
+| gradual | **adwin_var** | 213 | 117 | **85** | **85** |
+| incremental | ADWIN | 277 | 245 | 181 | 117 |
+| incremental | **adwin_var** | — | — | — | — |
+
+At 3 sd it catches gradual drift in **85 rows against ADWIN's 245**, and it is
+much quieter overall — **0.28 false alarms per 1000 steps against ADWIN's 1.93**
+and KSWIN's 2.80, firing just twice on the drift-free control where ADWIN fires
+18 times.
+
+The catch, stated plainly: **`adwin_var` is blind to incremental drift** (the
+dashes above — zero detections at every magnitude). A smooth ramp shifts the mean
+without changing the spread, so a variance detector has nothing to react to. So
+there is no single best detector: **the mean detector owns the smooth ramp, the
+variance detector owns the interleaved gradual case.** They are complements. On
+sudden and recurring drift the two are close, ADWIN a little faster at 1 sd.
+ADWIN remains the sensible default; `adwin_var` is the one to reach for when
+gradual drift is the concern.
 
 ### Does the calibration transfer? Mostly not
 
