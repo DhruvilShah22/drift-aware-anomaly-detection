@@ -20,17 +20,56 @@ holds off further adaptation until the model has had time to settle.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 
+import numpy as np
 from river import drift
 
-DETECTOR_KINDS = ("adwin", "kswin")
+DETECTOR_KINDS = ("adwin", "kswin", "adwin_var")
 
 # Steps to ignore further detections after one fires. Roughly the warm-up
 # length, so an adaptation completes before another can be triggered.
 DEFAULT_COOLDOWN = 250
+
+# Trailing window the dispersion transform computes its variance over. Fifty is
+# short enough to register a burst of outliers within a few dozen steps, long
+# enough that a single spike does not swing the variance on its own.
+DEFAULT_DISPERSION_WINDOW = 50
+
+
+class RollingDispersion:
+    """Turns a stream of scalars into the variance of its trailing window.
+
+    Feeding this to ADWIN instead of the raw signal makes the detector watch how
+    *spread out* the signal is rather than where it sits. That is the difference
+    that catches **gradual** drift: early in a gradual transition individual rows
+    flip between the old and new regime, so the monitored signal grows spiky —
+    its variance climbs — well before its mean has moved enough for a
+    location-based detector to react. On the smooth **incremental** ramp, by
+    contrast, the variance barely changes and this transform is blind to it, so
+    it is a complement to the plain mean detector, not a replacement. See the
+    sweep in PROGRESS.md for the measured trade-off.
+    """
+
+    def __init__(self, window: int = DEFAULT_DISPERSION_WINDOW) -> None:
+        if window < 2:
+            raise ValueError("dispersion window must be at least 2")
+        self.window = window
+        self._buffer: deque[float] = deque(maxlen=window)
+
+    def __call__(self, value: float) -> float:
+        self._buffer.append(float(value))
+        # Below two points variance is undefined / trivially zero; report 0 so the
+        # detector simply sees no dispersion yet rather than a spurious jump.
+        if len(self._buffer) < 2:
+            return 0.0
+        return float(np.var(self._buffer))
+
+    def reset(self) -> None:
+        self._buffer.clear()
 
 
 @dataclass
@@ -48,6 +87,10 @@ class DriftMonitor:
     cooldown: int = DEFAULT_COOLDOWN
     detections: list[int] = field(default_factory=list)
     suppressed_at: list[int] = field(default_factory=list)
+    # Optional stateful preprocessor applied to each value before the detector
+    # sees it — e.g. RollingDispersion, which makes ADWIN watch variance instead
+    # of location. None means the raw value is passed through unchanged.
+    transform: RollingDispersion | None = None
     _factory: Callable[[], drift.base.DriftDetector] | None = None
     _step: int = 0
     _last_fired: int | None = None
@@ -76,11 +119,17 @@ class DriftMonitor:
         if self._factory is None:
             raise RuntimeError("this monitor was built without a factory and cannot reset")
         self.detector = self._factory()
+        # The transform carries its own trailing window; it too is compared
+        # against a reference that has just moved, so clear it alongside.
+        if self.transform is not None:
+            self.transform.reset()
 
     def update(self, value: float) -> bool:
         step = self._step
         self._step += 1
 
+        if self.transform is not None:
+            value = self.transform(value)
         self.detector.update(value)
         if not self.detector.drift_detected:
             return False
@@ -113,8 +162,16 @@ def build_detector(
     Extra keyword arguments go straight to the underlying river detector, so a
     sweep can pass `delta=...` for ADWIN or `alpha=...` for KSWIN.
     """
+    transform: RollingDispersion | None = None
     if kind == "adwin":
         factory: Callable[[], drift.base.DriftDetector] = partial(drift.ADWIN, **kwargs)
+    elif kind == "adwin_var":
+        # Same ADWIN, but fed the trailing variance of the signal rather than the
+        # signal itself, so it reacts to a change in spread. `window` is peeled off
+        # for the transform; anything else goes to ADWIN.
+        window = kwargs.pop("window", DEFAULT_DISPERSION_WINDOW)
+        transform = RollingDispersion(window=window)
+        factory = partial(drift.ADWIN, **kwargs)
     elif kind == "kswin":
         # KSWIN samples from its reference window, so it needs a seed to be
         # reproducible; ADWIN is deterministic and takes none.
@@ -125,5 +182,9 @@ def build_detector(
         )
 
     return DriftMonitor(
-        kind=kind, detector=factory(), cooldown=cooldown, _factory=factory
+        kind=kind,
+        detector=factory(),
+        cooldown=cooldown,
+        transform=transform,
+        _factory=factory,
     )

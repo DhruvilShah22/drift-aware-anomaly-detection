@@ -36,7 +36,10 @@ from src.experiment import RunConfig, Strategy, run_strategy
 # 0.0 is the control. The rest span "barely there" to "unmissable" in units of
 # each sensor's own standard deviation.
 DEFAULT_MAGNITUDES = (0.0, 1.0, 2.0, 3.0, 5.0)
-DEFAULT_DETECTORS = ("adwin", "kswin")
+# adwin_var feeds ADWIN the trailing variance instead of the location signal. It
+# is here because the other two are flat against magnitude on gradual drift,
+# where a change shows up as rising spread before rising mean; see src/detectors.py.
+DEFAULT_DETECTORS = ("adwin", "kswin", "adwin_var")
 
 # A detection counts as attributable to the injected change if it lands within
 # this many rows after it. Same horizon the main evaluation uses.
