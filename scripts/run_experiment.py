@@ -175,6 +175,45 @@ def figure_rolling_f1(scenario: Scenario, runs: dict, path: Path, window: int = 
     plt.close(fig)
 
 
+def figure_event_vs_point_f1(table: pd.DataFrame, path: Path) -> None:
+    """Point-wise vs event-level F1 on the labelled stream, against the baseline.
+
+    The whole argument for event-level scoring in one picture: point-wise F1
+    clusters every strategy around the flag-everything line, while event-level F1
+    lifts the strategies that catch every fault with fewer flags clear of it.
+    """
+    labelled = table[table.stream.str.startswith("skab-")]
+    if labelled.empty or "event_f1" not in labelled.columns:
+        print("  (no event-level rows to plot)")
+        return
+
+    order = [s for s in COLOURS if s in set(labelled.strategy)]
+    rows = labelled.set_index("strategy").loc[order]
+    baseline = float(rows["flag_everything_f1"].iloc[0])
+
+    x = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(8, 4.4))
+    ax.bar(x - 0.2, rows["f1"], width=0.38, color="#b0b0b0", label="point-wise F1")
+    ax.bar(x + 0.2, rows["event_f1"], width=0.38,
+           color=[COLOURS[s] for s in order], label="event-level F1")
+    ax.axhline(baseline, color="#d62728", ls="--", lw=1.1,
+               label=f"flag-everything ({baseline:.3f})")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(order, fontsize=9)
+    ax.set_ylabel("F1")
+    ax.set_ylim(0, 0.75)
+    ax.set_title(
+        "Point-wise F1 buries the strategies at the baseline; event-level F1 separates them\n"
+        "(skab-valve1 — every strategy catches all 15 fault events, so they differ only in alarm volume)",
+        fontsize=9, loc="left",
+    )
+    ax.legend(fontsize=8, frameon=False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
 def figure_detection_delay(table: pd.DataFrame, path: Path) -> None:
     """How long the drift-triggered strategy took to notice each change."""
     rows = table[(table.strategy == "drift-triggered") & table.mean_delay.notna()]
@@ -236,6 +275,9 @@ def main() -> int:
         out = FIGURES_DIR / "rolling_f1.png"
         figure_rolling_f1(scenario, runs, out)
         print(f"  {out.relative_to(PROJECT_ROOT)}")
+
+    figure_event_vs_point_f1(table, FIGURES_DIR / "event_vs_point_f1.png")
+    print(f"  {(FIGURES_DIR / 'event_vs_point_f1.png').relative_to(PROJECT_ROOT)}")
 
     print(f"\nDone in {time.perf_counter() - started:.1f}s")
     return 0

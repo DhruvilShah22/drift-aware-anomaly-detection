@@ -468,13 +468,57 @@ switching would invalidate every committed figure, the demo cache and both GIFs
 for a change that alters no conclusion. Reasoning is in a comment at the call
 site so it does not read as an oversight.
 
+### 2026-07-22 — Event-level anomaly scoring added
+
+`src/evaluate.py` gains `to_events` and `event_metrics`; `score_run` now emits
+event-level columns alongside the point-wise ones on every labelled stream. 108
+tests pass (was 100). `results/metrics.csv` regenerated with `--force` — the
+point-wise columns are byte-for-byte unchanged (model behaviour is untouched;
+only scoring was added), and the new `results/figures/event_vs_point_f1.png`
+visualises the difference.
+
+**The metric, and why it is asymmetric.** Recall is event-level: fraction of
+contiguous true fault *blocks* that got at least one flag. Precision stays
+point-wise: fraction of flags landing inside a fault. Recall asks "was each fault
+noticed", precision asks "how much of the alarm budget was spent on real faults".
+The asymmetry is the whole point — point-wise recall punishes a detector that
+flags a 390-row block sparsely, which is exactly the behaviour you want.
+
+**What it revealed on `skab-valve1`** (event-level F1, vs the 0.512
+flag-everything ceiling):
+
+| policy | point-wise F1 | event F1 | events caught |
+| --- | --- | --- | --- |
+| static | 0.513 | 0.513 | 15/15 |
+| online-no-reset | 0.357 | 0.559 | 15/15 |
+| periodic | 0.544 | **0.622** | 15/15 |
+| drift-triggered | 0.502 | 0.593 | 15/15 |
+
+- **`online-no-reset` was never broken.** Point-wise F1 0.357 read as a failure;
+  it actually catches all 15 events, and its low point score was purely the
+  sparse-flagging artefact. It clears the baseline at event level.
+- **`static` is the one policy events do not help** — it flags 99.8% of points, so
+  counting blocks once gives it nothing. Correct: it earns no free lunch.
+- **Ranking is unchanged at the top** — `periodic` still edges `drift-triggered`,
+  so this does not overturn the headline claim, it sharpens it.
+
+**Honest limit, recorded in the README.** Event recall is 1.0 for *every* strategy
+here — the faults are long enough (~390 rows) that any non-silent detector hits
+each block. So on `valve1` specifically, event F1 collapses to a precision-driven
+ranking. That is still the right operational picture ("they all find the faults,
+they differ only in false-alarm volume") and strictly better than point-wise F1,
+but the recall axis does no work on this stream. A dataset with short, sparse
+anomalies is where event recall would carry its own weight — the natural next
+stream to add.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
 
-- Event-level rather than point-wise anomaly scoring would make F1 a real
-  discriminator on `valve1`; the 34% base rate and long contiguous fault blocks
-  are what make point-wise F1 nearly useless there.
+- Event-level scoring is **done** (2026-07-22, above). The open follow-on: it
+  needs a stream with *short, sparse* anomalies to exercise the event-recall
+  axis, which saturates at 1.0 on `valve1`'s long fault blocks. NAB's series are
+  the obvious candidates — recompute event metrics there.
 - The gradual-drift delay (flat at 245 rows regardless of magnitude) is the
   clearest open weakness. A detector on a different statistic — variance or a
   two-window KS test on residuals — might do better where ADWIN cannot.
