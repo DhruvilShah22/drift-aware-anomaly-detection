@@ -171,7 +171,11 @@ def test_detectors_react_promptly_to_a_real_shift(kind):
 # variance is stable except during drift, so on SKAB it is far quieter than the
 # mean detector (see the sweep in PROGRESS.md). This budget is a regression guard
 # on the worst case, not a claim about its operating behaviour.
-STATIONARY_FALSE_ALARM_BUDGET = {"adwin": 0, "kswin": 15, "adwin_var": 25}
+# adwin_meanvar is the OR of the mean and variance branches, so on white noise it
+# inherits the variance branch's chattiness (the mean branch is silent here).
+STATIONARY_FALSE_ALARM_BUDGET = {
+    "adwin": 0, "kswin": 15, "adwin_var": 25, "adwin_meanvar": 25,
+}
 
 
 @pytest.mark.parametrize("kind", DETECTOR_KINDS)
@@ -319,3 +323,38 @@ def test_adwin_var_reset_clears_the_transform_window():
 
     monitor.reset()
     assert len(monitor.transform._buffer) == 0, "reset must clear the transform's window"
+
+
+def test_adwin_meanvar_catches_both_a_mean_shift_and_a_spread_change():
+    """The combined detector is a superset: a step (mean) and a spread change both fire.
+
+    adwin alone misses the spread change; adwin_var alone misses a pure ramp. The
+    OR catches each through the relevant branch.
+    """
+    # Pure spread change, mean held at 0 — the case adwin cannot see.
+    rng = np.random.default_rng(3)
+    spread = [float(rng.normal(0.0, 0.05)) for _ in range(600)]
+    spread += [float(rng.normal(0.0, 3.0)) for _ in range(600)]
+
+    mean_only = build_detector("adwin", cooldown=0)
+    combined = build_detector("adwin_meanvar", cooldown=0)
+    assert not [i for i, v in enumerate(spread) if mean_only.update(v) and i >= 600], \
+        "adwin should be blind to a pure spread change"
+    assert [i for i, v in enumerate(spread) if combined.update(v) and i >= 600], \
+        "adwin_meanvar must catch the spread change via its variance branch"
+
+    # A step shift — caught through the mean branch.
+    combined_step = build_detector("adwin_meanvar", cooldown=0)
+    step_fired = [i for i, v in enumerate(_step_stream()) if combined_step.update(v) and i >= 600]
+    assert step_fired and step_fired[0] - 600 < 200
+
+
+def test_adwin_meanvar_carries_no_monitor_transform():
+    """The composite applies the variance transform internally, so the monitor has none."""
+    from src.detectors import MeanOrVariance
+
+    monitor = build_detector("adwin_meanvar")
+    assert monitor.transform is None
+    assert isinstance(monitor.detector, MeanOrVariance)
+    # A fresh composite is not already firing.
+    assert monitor.detector.drift_detected is False

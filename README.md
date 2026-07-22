@@ -183,12 +183,39 @@ and KSWIN's 2.80, firing just twice on the drift-free control where ADWIN fires
 
 The catch, stated plainly: **`adwin_var` is blind to incremental drift** (the
 dashes above — zero detections at every magnitude). A smooth ramp shifts the mean
-without changing the spread, so a variance detector has nothing to react to. So
-there is no single best detector: **the mean detector owns the smooth ramp, the
-variance detector owns the interleaved gradual case.** They are complements. On
-sudden and recurring drift the two are close, ADWIN a little faster at 1 sd.
-ADWIN remains the sensible default; `adwin_var` is the one to reach for when
-gradual drift is the concern.
+without changing the spread, so a variance detector has nothing to react to. The
+mean detector owns the smooth ramp, the variance detector owns the interleaved
+gradual case — they are complements.
+
+#### Running both: `adwin_meanvar`
+
+The obvious move is to run both ADWINs and fire when either does — `adwin_meanvar`.
+I expected this to catch every shape but pay for it in false alarms, since it
+inherits the union of both detectors' firing. **Measured, that cost barely
+appears:**
+
+| detector | shapes caught | gradual @3sd | false alarms / 1k | control firings |
+| --- | --- | --- | --- | --- |
+| ADWIN | all but gradual¹ | 245 | 1.93 | 18 |
+| adwin_var | all but incremental | 85 | **0.28** | **2** |
+| **adwin_meanvar** | **all four** | **85** | 1.98 | 18 |
+
+¹ ADWIN "catches" gradual but flat at 245 rows regardless of magnitude.
+
+`adwin_meanvar` detects **24 of 24** change points across the sweep (adwin_var
+manages 19 of 24, missing every incremental one), matches ADWIN exactly on
+sudden, incremental and recurring, and matches `adwin_var`'s best gradual delay —
+in fact beating it at low magnitude (149 vs 213 rows at 1 sd), because its extra
+adaptations keep the reference window fresher. And it does this at **1.98 false
+alarms per 1000 steps against ADWIN's 1.93**, with the *same* 18 firings on the
+drift-free control. The variance branch's false alarms overlap ADWIN's — both
+fire on the same real background drift — so the union is essentially ADWIN's rate,
+not the sum I had assumed.
+
+So the honest recommendation shifts: **`adwin_meanvar` is the best all-round
+detector** — it strictly improves on ADWIN (same everywhere, far better on
+gradual) at negligible extra cost. `adwin_var` is still the pick when gradual is
+the *only* concern and quiet matters, at 0.28 false alarms per 1000 steps.
 
 ### Does the calibration transfer? Mostly not
 
