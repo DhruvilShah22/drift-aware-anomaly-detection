@@ -5,7 +5,10 @@ useless in practice on another:
 
 1. **Anomaly quality** — precision, recall, F1 over the flags a strategy raised,
    both overall and as a rolling series so the demo can show quality changing
-   as the stream progresses.
+   as the stream progresses. Reported two ways: point-wise (every row scored
+   independently) and event-level (each contiguous fault block counts once).
+   The event-level view exists because point-wise F1 is nearly useless on the
+   labelled SKAB streams — see `EventMetrics`.
 2. **Drift timing** — how many steps after each true change point the detector
    actually fired, and how many change points it missed entirely. A detector
    that eventually notices every change but takes two thousand steps to do it is
@@ -55,6 +58,50 @@ class AnomalyMetrics:
             "false_negatives": self.false_negatives,
             "n_flagged": self.n_flagged,
             "n_actual": self.n_actual,
+        }
+
+
+@dataclass(frozen=True)
+class EventMetrics:
+    """Event-level anomaly quality: each contiguous fault block counts once.
+
+    Point-wise F1 is dominated by block length and base rate on the labelled SKAB
+    streams. Catching a 500-row fault with a handful of well-placed flags scores
+    near-zero point-wise *recall*, so a genuinely useful sparse detector looks the
+    same as a silent one, while flag-everything sits at the top purely on volume.
+    Every strategy ends up clustered near the trivial baseline and F1 cannot tell
+    them apart. This metric scores two things that pull apart instead:
+
+    - **recall** is the fraction of distinct true fault *events* that received at
+      least one flag. A block caught anywhere counts once, in full; its length no
+      longer sets the reward. This is what frees a sparse detector.
+    - **precision** stays point-wise: the fraction of flagged points that land
+      inside a true fault (front-extended by `tolerance`). This is the volume
+      penalty — flagging everything drives precision down to the base rate.
+
+    The asymmetry is deliberate. Recall asks "was each fault noticed at all",
+    which is an event question; precision asks "how much of the alarm budget was
+    spent on real faults", which is a volume question. `f1` is their harmonic
+    mean. Note this does *not* lower flag-everything's score — with recall 1.0 and
+    precision at the base rate it still reaches 2b/(1+b), the same ceiling as
+    point-wise F1. The gain is that a good detector is no longer pinned there too.
+    """
+
+    precision: float
+    recall: float
+    f1: float
+    n_true_events: int
+    n_detected_events: int
+    n_flagged: int
+    n_flagged_hits: int
+
+    def as_dict(self) -> dict[str, float]:
+        return {
+            "event_precision": self.precision,
+            "event_recall": self.recall,
+            "event_f1": self.f1,
+            "n_true_events": self.n_true_events,
+            "n_detected_events": self.n_detected_events,
         }
 
 
@@ -141,6 +188,75 @@ def rolling_f1(y_true, y_pred, window: int = 200) -> np.ndarray:
         lo = max(0, i - window + 1)
         out[i] = anomaly_metrics(y_true[lo : i + 1], y_pred[lo : i + 1]).f1
     return out
+
+
+def to_events(labels) -> list[tuple[int, int]]:
+    """Maximal contiguous runs of 1 as half-open ``[start, end)`` ranges.
+
+    A ground-truth fault that spans rows 100..149 inclusive is one event
+    ``(100, 150)``, not fifty. Everything event-level is built on this.
+    """
+    a = np.asarray(labels).astype(int)
+    events: list[tuple[int, int]] = []
+    i, n = 0, len(a)
+    while i < n:
+        if a[i] == 1:
+            j = i
+            while j < n and a[j] == 1:
+                j += 1
+            events.append((i, j))
+            i = j
+        else:
+            i += 1
+    return events
+
+
+def event_metrics(y_true, y_pred, tolerance: int = 0) -> EventMetrics:
+    """Event-level recall paired with point-level precision. See EventMetrics.
+
+    ``tolerance`` front-extends each true event, so a flag up to that many steps
+    *before* a fault's onset still counts as catching it — an early warning is a
+    hit, not a false alarm. It defaults to 0 (strict: the flag must land in the
+    labelled block itself).
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    if y_true.shape != y_pred.shape:
+        raise ValueError(f"shape mismatch: {y_true.shape} vs {y_pred.shape}")
+    if tolerance < 0:
+        raise ValueError("tolerance must be non-negative")
+
+    events = to_events(y_true)
+    n_true_events = len(events)
+
+    # The region a flag can score in: each true event, front-extended by
+    # `tolerance`. Precision and recall both judge hits against this one region,
+    # so an early-warning flag is credited consistently on both sides.
+    tp_region = np.zeros(len(y_true), dtype=bool)
+    for start, end in events:
+        tp_region[max(0, start - tolerance) : end] = True
+
+    flagged = y_pred == 1
+    n_flagged = int(flagged.sum())
+    n_flagged_hits = int(np.sum(flagged & tp_region))
+    precision = n_flagged_hits / n_flagged if n_flagged else 0.0
+
+    detected = sum(
+        1 for start, end in events if flagged[max(0, start - tolerance) : end].any()
+    )
+    recall = detected / n_true_events if n_true_events else 0.0
+
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    return EventMetrics(
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        n_true_events=n_true_events,
+        n_detected_events=detected,
+        n_flagged=n_flagged,
+        n_flagged_hits=n_flagged_hits,
+    )
 
 
 def drift_metrics(

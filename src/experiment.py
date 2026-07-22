@@ -75,7 +75,7 @@ import pandas as pd
 from src.data_loader import load_anomaly_free, load_skab_stream
 from src.detectors import build_detector
 from src.drift_injection import DRIFT_KINDS, inject
-from src.evaluate import anomaly_metrics, drift_metrics, summarise
+from src.evaluate import anomaly_metrics, drift_metrics, event_metrics, summarise
 from src.models import DEFAULT_THRESHOLD_QUANTILE, build_model
 
 
@@ -491,8 +491,19 @@ def score_run(scenario: Scenario, run: StrategyRun, horizon: int = 750) -> dict:
         # 0.5s means nothing on its own. Carried in the table so the number
         # cannot be read as a success without its reference point.
         base_rate = float(np.mean(y_true))
-        row["flag_everything_f1"] = 2 * base_rate / (1 + base_rate) if base_rate else 0.0
-        row["beats_flag_everything"] = bool(anomaly.f1 > row["flag_everything_f1"])
+        flag_everything_f1 = 2 * base_rate / (1 + base_rate) if base_rate else 0.0
+        row["flag_everything_f1"] = flag_everything_f1
+        row["beats_flag_everything"] = bool(anomaly.f1 > flag_everything_f1)
+
+        # Event-level view: each contiguous fault block counts once, which stops
+        # point-wise recall from burying a sparse-but-correct detector under the
+        # long fault blocks. flag-everything's event_f1 is the *same* 2b/(1+b)
+        # ceiling (recall 1.0, precision at the base rate), so the same reference
+        # column applies; what changes is whether the adaptive strategies clear
+        # it, which point-wise F1 could not show.
+        events = event_metrics(y_true, y_pred)
+        row.update(events.as_dict())
+        row["beats_flag_everything_event"] = bool(events.f1 > flag_everything_f1)
     else:
         # F1 on a stream with no true anomalies is zero for everyone and says
         # nothing; blank it out rather than publish a misleading column.

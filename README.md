@@ -105,10 +105,44 @@ At a 34.4% base rate, a detector that flags *every single point* scores F1
 flags 99.8% of points and achieves nothing beyond the trivial strategy.
 `periodic` is the only policy meaningfully above the line.
 
-**The defensible claim here is about alarm volume, not F1.** `periodic` and
-`drift-triggered` reach comparable or better F1 while alarming on roughly half
-as many points as the static baseline. Point-wise F1 is a weak discriminator on
-this data and is not evidence of much on its own.
+**Point-wise F1 is a weak discriminator on this data.** The fault blocks are long
+and contiguous (15 events, ~390 rows each), so point-wise *recall* rewards
+flagging every row of a block and punishes a detector that flags it sparsely —
+even though sparse flagging is exactly what you want operationally. That is why
+`online-no-reset` scores 0.357 and looks broken, and why the whole field
+collapses onto the baseline.
+
+#### Event-level scoring
+
+Scoring each contiguous fault block as **one event** — recall becomes "was each
+fault noticed at all", precision stays point-wise as the volume penalty — pulls
+the strategies apart (`src/evaluate.py`, `event_metrics`):
+
+| policy | point-wise F1 | event-level F1 | events caught | vs flag-everything |
+| --- | --- | --- | --- | --- |
+| static | 0.513 | 0.513 | 15 / 15 | +0.001 |
+| online-no-reset | 0.357 | 0.559 | 15 / 15 | +0.046 |
+| **periodic** | 0.544 | **0.622** | 15 / 15 | **+0.109** |
+| drift-triggered | 0.502 | 0.593 | 15 / 15 | +0.081 |
+
+![point-wise vs event-level F1](results/figures/event_vs_point_f1.png)
+
+Two things this reveals that point-wise F1 hid:
+
+- **`online-no-reset` was never broken.** It catches all 15 fault events; its low
+  point-wise F1 was purely the sparse-flagging artefact. At event level it clears
+  the baseline.
+- **`static` is the one policy events do not help** — it flags 99.8% of points, so
+  counting blocks once gives it nothing, correctly. It stays at the baseline while
+  the three adaptive policies rise above it, `periodic` by the most.
+
+**The honest limit:** every strategy catches every fault event here (event recall
+= 1.0 across the board), so on this stream event-level F1 reduces to a
+precision-driven ranking — "they all find the faults, they differ only in how many
+false alarms they raise". That is the correct operational picture, and it is
+exactly the picture point-wise F1 obscured, but the recall axis is uninformative
+on `valve1` specifically because the faults are so long. A stream with short,
+sparse anomalies is where event recall would carry its own weight.
 
 ### How large must a change be to be noticed
 

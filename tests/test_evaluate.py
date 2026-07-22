@@ -17,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.evaluate import (  # noqa: E402
     anomaly_metrics,
     drift_metrics,
+    event_metrics,
     results_table,
     rolling_f1,
     summarise,
+    to_events,
 )
 
 
@@ -80,6 +82,96 @@ def test_rolling_f1_tracks_a_model_that_goes_bad_halfway():
 def test_rolling_f1_rejects_a_bad_window():
     with pytest.raises(ValueError, match="window must be at least 1"):
         rolling_f1([0, 1], [0, 1], window=0)
+
+
+def test_to_events_groups_contiguous_runs():
+    #      idx: 0  1  2  3  4  5  6  7  8
+    labels = [0, 1, 1, 0, 0, 1, 0, 1, 1]
+    # runs of 1s: rows 1-2, row 5, rows 7-8 -> half-open ranges
+    assert to_events(labels) == [(1, 3), (5, 6), (7, 9)]
+
+
+def test_to_events_on_edges_and_empties():
+    assert to_events([1, 1, 1]) == [(0, 3)]  # runs at the very start and end
+    assert to_events([0, 0, 0]) == []
+    assert to_events([]) == []
+
+
+def test_event_recall_credits_a_long_block_caught_by_a_single_flag():
+    """The whole point: one flag inside a fault block detects the event in full."""
+    #       idx: 0  1  2  3  4  5  6  7  8  9
+    y_true = [0, 1, 1, 1, 1, 1, 0, 0, 0, 0]  # one event spanning rows 1-5
+    y_pred = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0]  # a single flag at row 3, inside it
+
+    m = event_metrics(y_true, y_pred)
+    # Point-wise recall would be 1/5 = 0.2; event recall is 1/1 = 1.0.
+    assert m.recall == 1.0
+    assert m.n_true_events == 1
+    assert m.n_detected_events == 1
+    # Precision stays point-wise: the one flag is a hit, so 1/1.
+    assert m.precision == 1.0
+    assert m.f1 == 1.0
+    # Contrast with the point-wise metric on the same arrays.
+    assert anomaly_metrics(y_true, y_pred).recall == pytest.approx(0.2)
+
+
+def test_event_precision_is_the_volume_penalty():
+    #       idx: 0  1  2  3  4  5  6  7  8  9
+    y_true = [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]  # one event, rows 2-3
+    y_pred = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  # flag everything
+
+    m = event_metrics(y_true, y_pred)
+    # Every event is trivially caught, so recall is perfect...
+    assert m.recall == 1.0
+    # ...but precision falls to the base rate: 2 of 10 flags land on a fault.
+    assert m.precision == pytest.approx(0.2)
+    # f1 = 2 * 0.2 * 1.0 / (1.2) = 1/3, the flag-everything ceiling here.
+    assert m.f1 == pytest.approx(1 / 3)
+
+
+def test_event_metrics_missed_event_and_spurious_flags():
+    #       idx: 0  1  2  3  4  5  6  7
+    y_true = [0, 1, 1, 0, 0, 1, 1, 0]  # two events: rows 1-2 and 5-6
+    y_pred = [1, 1, 0, 0, 0, 0, 0, 0]  # catches the first, misses the second
+
+    m = event_metrics(y_true, y_pred)
+    assert m.n_true_events == 2
+    assert m.n_detected_events == 1
+    assert m.recall == 0.5
+    # Two flags raised, one lands in event 1 -> precision 1/2.
+    assert m.precision == 0.5
+    assert m.f1 == 0.5
+
+
+def test_event_tolerance_credits_an_early_flag():
+    #       idx: 0  1  2  3  4  5
+    y_true = [0, 0, 0, 1, 1, 0]  # event at rows 3-4
+    y_pred = [0, 1, 0, 0, 0, 0]  # flag two steps before onset
+
+    strict = event_metrics(y_true, y_pred, tolerance=0)
+    assert strict.recall == 0.0
+    assert strict.precision == 0.0  # the early flag is a miss and a false alarm
+
+    lenient = event_metrics(y_true, y_pred, tolerance=2)
+    assert lenient.recall == 1.0  # now within the front-extended window
+    assert lenient.precision == 1.0
+
+
+def test_event_metrics_degenerate_cases():
+    # No true events: recall is 0 rather than undefined, matching anomaly_metrics.
+    assert event_metrics([0, 0, 0], [0, 1, 0]).recall == 0.0
+    # Silent predictor: no hits anywhere.
+    silent = event_metrics([0, 1, 1, 0], [0, 0, 0, 0])
+    assert silent.recall == 0.0
+    assert silent.precision == 0.0
+    assert silent.f1 == 0.0
+
+
+def test_event_metrics_rejects_bad_input():
+    with pytest.raises(ValueError, match="shape mismatch"):
+        event_metrics([0, 1], [0, 1, 1])
+    with pytest.raises(ValueError, match="tolerance must be non-negative"):
+        event_metrics([0, 1], [0, 1], tolerance=-1)
 
 
 def test_drift_timing_on_an_exact_example():
