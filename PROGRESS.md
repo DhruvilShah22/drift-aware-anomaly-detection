@@ -588,6 +588,38 @@ spikiness. Confirmed first in a standalone diagnostic, then in the full sweep.
 - On sudden and recurring the three are close; ADWIN a touch faster at 1 sd. ADWIN
   stays the default; adwin_var is the tool for when gradual drift is the concern.
 
+### 2026-07-22 — Combined mean-or-variance detector (adwin_meanvar)
+
+`MeanOrVariance` in `src/detectors.py`: two ADWINs in parallel, one on the raw
+signal, one on its rolling variance, fired when either does. Added to the sweep
+(`results/sweep.csv` now 80 runs), notebook, README. 121 tests pass (was 116).
+
+**I predicted a cost that did not materialise, and this is the finding.** The
+prior entry left this un-built on the theory that ORing the two branches would
+inherit the union of their false alarms and be meaningfully chattier than ADWIN.
+Measured, it is not: **1.98 false alarms per 1000 steps against ADWIN's 1.93, and
+the identical 18 firings on the drift-free control.** The variance branch's false
+alarms land on the *same* real background-drift events ADWIN already fires on, so
+the union is essentially ADWIN's rate, not the sum. My mental model added two
+independent error rates; they are strongly correlated because they share a cause.
+
+**What it buys** (full sweep):
+
+- Detects **24/24** change points (adwin_var manages 19/24, missing every
+  incremental one; adwin_var is blind to the smooth ramp).
+- Matches ADWIN exactly on sudden (9), incremental (277→117) and recurring (20).
+- Matches adwin_var's best gradual delay and **beats it at low magnitude** —
+  gradual 149→85→85→85 vs adwin_var's 213→117→85→85 — because the extra
+  adaptations keep the reference window fresher, so the post-change signal looks
+  larger against a more recent reference.
+
+So `adwin_meanvar` **strictly improves on ADWIN** (same everywhere, far better on
+gradual) at negligible extra false-alarm cost. It is the best all-round detector;
+adwin_var stays the pick only when gradual is the sole concern and 0.28 vs 1.98
+false alarms per 1000 steps is worth losing incremental coverage for. The project
+default is left as `adwin` so committed figures and the demo cache stay valid, but
+the recommendation in the README is now `adwin_meanvar`.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
@@ -596,11 +628,13 @@ Ideas deliberately left undone rather than half-built:
   Recall still saturates for the best strategy per stream; genuinely exercising
   the recall axis within a single strategy would need a stream where even a good
   detector misses whole events, which neither SKAB nor NAB provides.
-- The gradual-drift weakness is **addressed** by `adwin_var` (2026-07-22, above).
-  The open follow-on: a *combined* mean-or-variance detector would catch both the
-  smooth ramp and the interleaved case in one monitor. It was left un-built
-  because ORing the two inherits ADWIN's chattiness on the base recording's
-  background drift, and measuring that trade-off honestly is its own small study.
+- The gradual-drift weakness is **addressed** — `adwin_var` for the gradual-only
+  case, `adwin_meanvar` for all shapes (both 2026-07-22, above). What is left is
+  a deliberate choice, not a gap: the *default* detector in `experiment.py` is
+  still `adwin`, so switching it to `adwin_meanvar` and regenerating every figure,
+  the demo cache and both GIFs would be the way to make the better detector the
+  headline rather than a documented alternative. Left undone because it changes no
+  conclusion the write-up draws, only which detector the demo happens to show.
 - The old note here read that `ec2_request_latency` and `rogue_agent_key_updown`
   are "unsolved by any configuration" — that was a point-wise-scoring artefact,
   now retracted: both clear flag-everything at event level. What remains genuinely

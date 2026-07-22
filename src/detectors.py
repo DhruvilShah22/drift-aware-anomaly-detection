@@ -28,7 +28,7 @@ from functools import partial
 import numpy as np
 from river import drift
 
-DETECTOR_KINDS = ("adwin", "kswin", "adwin_var")
+DETECTOR_KINDS = ("adwin", "kswin", "adwin_var", "adwin_meanvar")
 
 # Steps to ignore further detections after one fires. Roughly the warm-up
 # length, so an adaptation completes before another can be triggered.
@@ -70,6 +70,43 @@ class RollingDispersion:
 
     def reset(self) -> None:
         self._buffer.clear()
+
+
+class MeanOrVariance:
+    """Two ADWINs in parallel; fires when *either* one does.
+
+    One ADWIN watches the raw signal (a location change — the smooth incremental
+    ramp), the other watches its trailing variance (a spread change — the
+    interleaved gradual case). `adwin` alone is flat on gradual, `adwin_var` alone
+    is blind to incremental; ORing them catches every drift shape in one monitor.
+
+    The trade is not hidden: the OR inherits the *union* of the two detectors'
+    false alarms, and the mean branch is the chatty one on this data because the
+    base recording drifts on its own. So this is the sensitive option — reach for
+    it when missing a drift is worse than an extra rebuild, not when quiet is the
+    priority. Measured cost is in PROGRESS.md.
+
+    It presents river's DriftDetector surface — `update(value)` then read
+    `drift_detected` — so `DriftMonitor` drives it exactly like a plain detector,
+    with no transform of its own (this class applies the variance transform to its
+    own branch internally).
+    """
+
+    def __init__(self, window: int = DEFAULT_DISPERSION_WINDOW, **adwin_kwargs) -> None:
+        self._mean = drift.ADWIN(**adwin_kwargs)
+        self._var = drift.ADWIN(**adwin_kwargs)
+        self._dispersion = RollingDispersion(window=window)
+        self._drift = False
+
+    def update(self, value: float) -> "MeanOrVariance":
+        self._mean.update(value)
+        self._var.update(self._dispersion(value))
+        self._drift = bool(self._mean.drift_detected or self._var.drift_detected)
+        return self
+
+    @property
+    def drift_detected(self) -> bool:
+        return self._drift
 
 
 @dataclass
@@ -172,6 +209,13 @@ def build_detector(
         window = kwargs.pop("window", DEFAULT_DISPERSION_WINDOW)
         transform = RollingDispersion(window=window)
         factory = partial(drift.ADWIN, **kwargs)
+    elif kind == "adwin_meanvar":
+        # A mean ADWIN OR a variance ADWIN — catches every shape. The composite
+        # applies the variance transform to its own branch, so no monitor-level
+        # transform is attached. `window` sizes that branch; the rest go to both
+        # ADWINs.
+        window = kwargs.pop("window", DEFAULT_DISPERSION_WINDOW)
+        factory = partial(MeanOrVariance, window=window, **kwargs)
     elif kind == "kswin":
         # KSWIN samples from its reference window, so it needs a seed to be
         # reproducible; ADWIN is deterministic and takes none.
