@@ -1,7 +1,7 @@
-series,flag_everything,transferred_q098,retuned,best_q,cost_of_transfer,transferred_beats_baseline
-machine_temperature_system_failure,0.189,0.528,0.528,0.98,0.0,True
-cpu_utilization_asg_misconfiguration,0.162,0.163,0.399,0.95,0.237,True
-nyc_taxi,0.2,0.112,0.23,0.5,0.118,False
-ambient_temperature_system_failure,0.208,0.371,0.371,0.98,0.0,True
-rogue_agent_key_updown,0.219,0.04,0.162,0.5,0.122,False
-ec2_request_latency_system_failure,0.205,0.107,0.189,0.5,0.082,False
+series,n_windows,flag_everything,transferred_q098,retuned,best_q,cost_of_transfer,transferred_beats_baseline,event_transferred_q098,event_retuned,event_best_q,event_transferred_beats_baseline,event_recall_min_q098,event_cost_of_transfer
+machine_temperature_system_failure,4,0.189,0.528,0.528,0.98,0.0,True,0.668,0.668,0.98,True,0.5,0.0
+cpu_utilization_asg_misconfiguration,1,0.162,0.163,0.399,0.95,0.237,True,0.285,0.444,0.95,True,0.0,0.159
+nyc_taxi,5,0.2,0.112,0.23,0.5,0.118,False,0.393,0.393,0.98,True,1.0,0.0
+ambient_temperature_system_failure,2,0.208,0.371,0.371,0.98,0.0,True,0.458,0.458,0.98,True,0.5,0.0
+rogue_agent_key_updown,2,0.219,0.04,0.162,0.5,0.122,False,0.282,0.282,0.98,True,0.5,0.0
+ec2_request_latency_system_failure,3,0.205,0.107,0.189,0.5,0.082,False,0.408,0.408,0.98,True,1.0,0.0
