@@ -538,6 +538,20 @@ same caveat as valve1). The recall axis discriminates *between strategies*: at
 q=0.98 a weaker policy catches none of `cpu_utilization`'s single window
 (event_recall_min 0.0). Reported as the min so the variation is visible.
 
+### 2026-07-22 — Event metrics added to the Kaggle notebook
+
+`notebooks/kaggle_experiment.ipynb` gains a second section, "Event-level anomaly
+quality (labelled SKAB valve1)", after the drift-timing sweep. The sweep itself
+could not carry event metrics: it runs on the injected anomaly-free streams,
+which have no labelled anomalies, so anomaly F1 is undefined there. The new
+section runs the same tested `compare()` on the labelled valve1 stream and shows
+point-wise vs event-level F1 plus a bar chart. Both new code cells were executed
+locally against real output before committing (static 0.513/0.513,
+online-no-reset 0.357/0.559, periodic 0.544/0.622, drift-triggered 0.502/0.593),
+matching `results/metrics.csv`. The addition is purely additive — the 15 existing
+cells are byte-identical. It needs internet enabled on Kaggle (or valve1 in an
+attached dataset), since `labelled_scenario` downloads the labelled recordings.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
