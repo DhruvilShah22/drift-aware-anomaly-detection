@@ -511,21 +511,49 @@ but the recall axis does no work on this stream. A dataset with short, sparse
 anomalies is where event recall would carry its own weight — the natural next
 stream to add.
 
+### 2026-07-22 — Event metrics extended to the NAB transfer study
+
+`scripts/run_transfer.py` now emits event-level columns per run and a parallel
+event-level summary block; `results/transfer.csv` and `transfer_summary.csv`
+regenerated (point-wise columns unchanged). This is the "short, sparse anomalies"
+follow-on the entry above flagged, and it landed a bigger finding than expected.
+
+**Event scoring reverses the "unsolved" verdict on three NAB series.** Point-wise,
+the transferred SKAB q=0.98 setting beats flag-everything on 3/6 series; at event
+level it beats it on **6/6**, and the mean cost of not retuning falls from 0.093
+to **0.026 F1**. The three series I had recorded as unsolved — `nyc_taxi`,
+`ec2_request_latency`, `rogue_agent_key_updown` — are all cleared once anomalies
+are scored as windows (event F1 0.393 / 0.408 / 0.282 vs baselines 0.200 / 0.205 /
+0.219). They were never unsolvable: point-wise F1 could not credit a correct but
+sparse detection of a short window. So a good part of what read as a transfer
+failure was the *metric*, not the detector.
+
+**My first framing of this was wrong and I corrected it.** I initially reported
+event recall "at the best threshold", which came out 1.0 everywhere and made the
+whole exercise look pointless. The best event-F1 threshold is permissive (q=0.50),
+where recall trivially saturates. The informative number is recall at the
+*transferred* selective q=0.98 setting, and even there the *best* strategy per
+series catches every window (recall 1.0, so its event F1 is precision-driven, the
+same caveat as valve1). The recall axis discriminates *between strategies*: at
+q=0.98 a weaker policy catches none of `cpu_utilization`'s single window
+(event_recall_min 0.0). Reported as the min so the variation is visible.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
 
-- Event-level scoring is **done** (2026-07-22, above). The open follow-on: it
-  needs a stream with *short, sparse* anomalies to exercise the event-recall
-  axis, which saturates at 1.0 on `valve1`'s long fault blocks. NAB's series are
-  the obvious candidates — recompute event metrics there.
+- Event-level scoring is **done** on both datasets (2026-07-22 entries above).
+  Recall still saturates for the best strategy per stream; genuinely exercising
+  the recall axis within a single strategy would need a stream where even a good
+  detector misses whole events, which neither SKAB nor NAB provides.
 - The gradual-drift delay (flat at 245 rows regardless of magnitude) is the
   clearest open weakness. A detector on a different statistic — variance or a
   two-window KS test on residuals — might do better where ADWIN cannot.
-- NAB's `ec2_request_latency` and `rogue_agent_key_updown` are unsolved by any
-  configuration or threshold rule tried. Worth understanding why before adding
-  more datasets — the threshold study rules them out as a calibration problem,
-  so it is something about the series themselves.
+- The old note here read that `ec2_request_latency` and `rogue_agent_key_updown`
+  are "unsolved by any configuration" — that was a point-wise-scoring artefact,
+  now retracted: both clear flag-everything at event level. What remains genuinely
+  hard is their *point-wise* precision, i.e. localising the anomaly to the row,
+  not detecting the window.
 - **The threshold is no longer the bottleneck.** That was the leading suspect
   and it has now been measured: the best rule improves things by ~0.03 and the
   adaptive strategies stay below flag-everything. The remaining gap is more

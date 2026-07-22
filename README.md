@@ -187,15 +187,49 @@ alone both datasets.
 
 Two further results worth stating plainly:
 
-- **On `ec2_request_latency` and `rogue_agent_key_updown`, nothing beats
-  flag-everything even after retuning.** Those series are not solved here.
+- **Point-wise, on `ec2_request_latency` and `rogue_agent_key_updown`, nothing
+  beats flag-everything even after retuning.** Under point-wise F1, those series
+  are not solved here — but see the event-level view directly below, which
+  reverses this.
 - **No strategy wins consistently.** The best performer varies by series across
   all four policies, including the two controls. Whatever advantage the adaptive
   approach shows on SKAB does not reproduce as a general ranking.
 
+#### Event-level scoring reverses the "unsolved" verdict
+
+Scoring each labelled anomaly *window* once, rather than every row (the same
+event-level metric used on `valve1`), changes this conclusion materially. NAB's
+anomalies are short and sparse, so point-wise recall punishes a detector that
+flags a window without also flagging its neighbourhood — which is exactly what
+sinks the three series above.
+
+| series | flag-everything | transferred event F1 (q=0.98) | retuned event F1 | beats baseline |
+| --- | --- | --- | --- | --- |
+| machine_temperature | 0.189 | 0.668 | 0.668 | yes |
+| cpu_utilization_asg | 0.162 | 0.285 | 0.444 | yes |
+| ambient_temperature | 0.208 | 0.458 | 0.458 | yes |
+| nyc_taxi | 0.200 | 0.393 | 0.393 | yes |
+| ec2_request_latency | 0.205 | 0.408 | 0.408 | yes |
+| rogue_agent_key_updown | 0.219 | 0.282 | 0.282 | yes |
+
+At event level the transferred q=0.98 setting beats flag-everything on **all six
+series (point-wise: three)**, and the mean cost of not retuning falls from 0.093
+to **0.026 F1**. The three series point-wise scoring called unsolved are all
+cleared — they were never unsolvable; point-wise F1 simply could not credit a
+correct but sparse detection of a short window.
+
+The same caveat as `valve1` applies. For the *best* strategy on each series event
+recall saturates at 1.0, so its event F1 is precision-driven. The recall axis
+discriminates between *strategies* instead — at q=0.98 a weaker policy can catch
+none of a series' anomaly windows (event recall 0.0) while the best catches all
+of them.
+
 So the honest conclusion is that the *method* carries across datasets but the
-*numbers* do not. The threshold has to be set from the expected anomaly rate of
-the specific deployment; it is not a property of the approach.
+point-wise *numbers* do not — and that a good part of that gap was the metric,
+not the detector: once anomalies are scored as events, the transferred setting
+clears the trivial baseline on every series. The threshold still has to be set
+from the expected anomaly rate of the specific deployment; that much is not a
+property of the approach.
 
 ### Deriving the threshold instead of hand-setting it
 
@@ -255,9 +289,12 @@ These are real constraints on what the numbers above can support.
 - **The labelled stream is concatenated** from 16 separate valve1 recordings to
   get usable length. The joins are genuine regime changes of unknown size, so
   that stream is used for anomaly quality only, never for drift timing.
-- **The calibration does not transfer.** Measured, not assumed — see the
-  transfer section above. SKAB's threshold costs 0.093 F1 on average on NAB and
-  beats the trivial baseline on only half its series.
+- **The calibration transfers only partially.** Measured, not assumed — see the
+  transfer section above. Point-wise, SKAB's threshold costs 0.093 F1 on average
+  on NAB and beats the trivial baseline on only half its series; scored at the
+  event level the cost falls to 0.026 and it clears the baseline on all six, so
+  much of the apparent transfer failure was the point-wise metric, not the
+  detector. A per-deployment threshold is still required either way.
 - **Thresholds are calibrated per stream family** (0.98 quantile where anomalies
   are rare, 0.50 where they are a third of the data). That is a deployment-time
   choice, not something the method decides for itself.
