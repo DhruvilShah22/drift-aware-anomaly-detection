@@ -40,7 +40,7 @@ DEFAULT_MAGNITUDES = (0.0, 1.0, 2.0, 3.0, 5.0)
 # catching gradual drift where the mean detectors are flat; adwin_meanvar ORs the
 # two so it catches every shape at the cost of the union of their false alarms.
 # See src/detectors.py.
-DEFAULT_DETECTORS = ("adwin", "kswin", "adwin_var", "adwin_meanvar")
+DEFAULT_DETECTORS = ("adwin", "kswin", "adwin_var", "adwin_meanvar", "pagehinkley")
 
 # A detection counts as attributable to the injected change if it lands within
 # this many rows after it. Same horizon the main evaluation uses.
@@ -56,6 +56,12 @@ class SweepConfig:
     threshold_quantile: float = 0.98
     max_rows: int | None = None
     seed: int = 42
+    # Repeat every cell at each of these seeds. `None` keeps the original
+    # single-run behaviour at `seed`, so existing callers and the committed
+    # single-seed sweep.csv are unaffected. A delay difference between two
+    # detectors is not worth reporting until it has been repeated, and the
+    # gradual injection is itself random, so this is where that comes from.
+    seeds: tuple[int, ...] | None = None
 
 
 def sweep(
@@ -74,69 +80,82 @@ def sweep(
     if config.max_rows is not None:
         frame, labels = frame.iloc[: config.max_rows], labels.iloc[: config.max_rows]
 
-    run_config = RunConfig(
-        warmup_size=config.warmup_size,
-        threshold_quantile=config.threshold_quantile,
-        seed=config.seed,
-    )
+    seeds = config.seeds if config.seeds is not None else (config.seed,)
 
     rows: list[dict] = []
-    total = len(config.kinds) * len(config.magnitudes) * len(config.detectors)
+    total = (
+        len(config.kinds) * len(config.magnitudes) * len(config.detectors) * len(seeds)
+    )
     done = 0
 
-    for kind in config.kinds:
-        for magnitude in config.magnitudes:
-            stream = inject(kind, frame, labels, magnitude=magnitude)
+    for seed in seeds:
+        run_config = RunConfig(
+            warmup_size=config.warmup_size,
+            threshold_quantile=config.threshold_quantile,
+            seed=seed,
+        )
+        for kind in config.kinds:
+            for magnitude in config.magnitudes:
+                # Only the gradual shape draws randomly, so only it takes the
+                # seed. Handing one to the others would imply a replication
+                # they do not have.
+                inject_kwargs = {"magnitude": magnitude}
+                if kind == "gradual":
+                    inject_kwargs["seed"] = seed
+                stream = inject(kind, frame, labels, **inject_kwargs)
 
-            for detector in config.detectors:
-                strategy = Strategy(
-                    "drift-triggered",
-                    model_kind="hst",
-                    adapt="drift",
-                    detector_kind=detector,
-                )
-                run = run_strategy(stream.frame, strategy, run_config)
-                start = run.eval_start
-
-                points = [c for c in stream.drift_points if c >= start]
-                metrics = drift_metrics(
-                    detections=[d - start for d in run.detections],
-                    change_points=[c - start for c in points],
-                    n_steps=len(stream.frame) - start,
-                    horizon=ATTRIBUTION_HORIZON,
-                )
-
-                flags = run.flags[start:]
-                rows.append({
-                    "kind": kind,
-                    "magnitude": magnitude,
-                    "detector": detector,
-                    "n_change_points": metrics.n_change_points,
-                    "n_detected": metrics.n_detected,
-                    "detection_rate": metrics.detection_rate,
-                    "mean_delay": metrics.mean_delay,
-                    "median_delay": metrics.median_delay,
-                    "n_detections_total": len(run.detections),
-                    "false_alarms_per_1k": metrics.false_alarms_per_1k,
-                    "alarm_rate": float(flags.mean()),
-                    "n_adaptations": run.n_adaptations,
-                    "n_steps": len(flags),
-                    "seconds": round(run.seconds, 2),
-                })
-
-                done += 1
-                if verbose:
-                    row = rows[-1]
-                    delay = (
-                        f"{row['mean_delay']:.0f}"
-                        if not np.isnan(row["mean_delay"]) else "—"
+                for detector in config.detectors:
+                    strategy = Strategy(
+                        "drift-triggered",
+                        model_kind="hst",
+                        adapt="drift",
+                        detector_kind=detector,
                     )
-                    print(
-                        f"  [{done:>3}/{total}] {kind:<12} mag={magnitude:<4} "
-                        f"{detector:<5} detected {row['n_detected']}/"
-                        f"{row['n_change_points']}, delay {delay:>4}, "
-                        f"{row['n_detections_total']:>3} total firings"
+                    run = run_strategy(stream.frame, strategy, run_config)
+                    start = run.eval_start
+
+                    points = [c for c in stream.drift_points if c >= start]
+                    metrics = drift_metrics(
+                        detections=[d - start for d in run.detections],
+                        change_points=[c - start for c in points],
+                        n_steps=len(stream.frame) - start,
+                        horizon=ATTRIBUTION_HORIZON,
                     )
+
+                    flags = run.flags[start:]
+                    rows.append({
+                        "kind": kind,
+                        "magnitude": magnitude,
+                        "detector": detector,
+                        "seed": seed,
+                        "stream_is_stochastic": kind == "gradual",
+                        "n_change_points": metrics.n_change_points,
+                        "n_detected": metrics.n_detected,
+                        "detection_rate": metrics.detection_rate,
+                        "mean_delay": metrics.mean_delay,
+                        "median_delay": metrics.median_delay,
+                        "n_detections_total": len(run.detections),
+                        "false_alarms_per_1k": metrics.false_alarms_per_1k,
+                        "alarm_rate": float(flags.mean()),
+                        "n_adaptations": run.n_adaptations,
+                        "n_steps": len(flags),
+                        "seconds": round(run.seconds, 2),
+                    })
+
+                    done += 1
+                    if verbose:
+                        row = rows[-1]
+                        delay = (
+                            f"{row['mean_delay']:.0f}"
+                            if not np.isnan(row["mean_delay"]) else "—"
+                        )
+                        print(
+                            f"  [{done:>4}/{total}] seed={seed} {kind:<12} "
+                            f"mag={magnitude:<4} {detector:<13} detected "
+                            f"{row['n_detected']}/{row['n_change_points']}, "
+                            f"delay {delay:>4}, "
+                            f"{row['n_detections_total']:>3} total firings"
+                        )
 
     return pd.DataFrame(rows)
 
@@ -148,9 +167,13 @@ def attribution_table(table: pd.DataFrame) -> pd.DataFrame:
     produced with nothing injected. It is the honest measure of what the
     injected change actually caused, given the base recording drifts on its own.
     """
+    # Match the control within the same seed where the sweep was repeated, so a
+    # run is compared against the drift-free version of its own stream rather
+    # than against some other seed's.
+    keys = ["kind", "detector"] + (["seed"] if "seed" in table.columns else [])
     control = (
         table[table.magnitude == 0.0]
-        .set_index(["kind", "detector"])["n_detections_total"]
+        .set_index(keys)["n_detections_total"]
         .rename("control_firings")
     )
     if control.empty:
@@ -158,7 +181,7 @@ def attribution_table(table: pd.DataFrame) -> pd.DataFrame:
             "the sweep has no magnitude=0.0 control, so nothing can be attributed"
         )
 
-    merged = table.join(control, on=["kind", "detector"])
+    merged = table.join(control, on=keys)
     merged["excess_firings"] = merged["n_detections_total"] - merged["control_firings"]
     return merged
 
