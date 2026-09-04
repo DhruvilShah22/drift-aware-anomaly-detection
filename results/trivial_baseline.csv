@@ -1,0 +1,2 @@
+point_precision,point_recall,point_f1,composite_precision,composite_recall,composite_f1,range_precision,range_recall,range_f1,range_alpha1_precision,range_alpha1_recall,range_alpha1_f1,pa_precision,pa_recall,pa_f1,pak_precision,pak_recall,pak_f1
+0.3442890442890443,1.0,0.5122247268943991,0.3442890442890443,1.0,0.5122247268943991,0.02295260295260295,1.0,0.044875203184103776,0.02295260295260295,1.0,0.044875203184103776,0.3442890442890443,1.0,0.5122247268943991,0.3442890442890443,1.0,0.5122247268943991
