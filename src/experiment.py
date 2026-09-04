@@ -79,6 +79,13 @@ from src.evaluate import anomaly_metrics, drift_metrics, event_metrics, summaris
 from src.models import DEFAULT_THRESHOLD_QUANTILE, build_model
 
 
+# Set False to force the row-by-row scoring loop for every strategy. The two
+# paths are meant to agree exactly, and `tests/test_batched_equivalence.py`
+# flips this to assert that they do. There is no reason to turn it off in
+# ordinary use; it exists so the claim is testable rather than asserted.
+BATCHED_SCORING = True
+
+
 class ReferenceStatistic:
     """A one-number summary of how far the input has moved from a reference window.
 
@@ -136,6 +143,57 @@ def default_strategies(detector_kind: str = "adwin") -> list[Strategy]:
     ]
 
 
+def factorial_strategies(detector_kind: str = "adwin") -> list[Strategy]:
+    """The full model-by-policy grid, plus three classical static baselines.
+
+    `default_strategies` above is the original four, and it has a confound that
+    only became visible once we tried to write the comparison down: `static` is
+    an Isolation Forest while `periodic` and `drift-triggered` are Half-Space
+    Trees, so those rows differ in the model *and* the policy. The
+    `online-no-reset` control brackets it but does not separate it.
+
+    Here each policy is run under both models, so the two factors can be read
+    apart. The three sklearn baselines answer the other obvious question, which
+    is whether any of this is specific to the two models we happened to pick.
+    """
+    grid = [
+        Strategy("hst-static", model_kind="hst", adapt="never"),
+        Strategy("hst-online", model_kind="hst", adapt="never", learn_online=True),
+        Strategy("hst-periodic", model_kind="hst", adapt="periodic", retrain_every=1000),
+        Strategy("hst-drift", model_kind="hst", adapt="drift", detector_kind=detector_kind),
+        Strategy("iforest-static", model_kind="iforest", adapt="never"),
+        Strategy("iforest-periodic", model_kind="iforest", adapt="periodic", retrain_every=1000),
+        Strategy("iforest-drift", model_kind="iforest", adapt="drift", detector_kind=detector_kind),
+    ]
+    baselines = [
+        Strategy("lof-static", model_kind="lof", adapt="never"),
+        Strategy("ocsvm-static", model_kind="ocsvm", adapt="never"),
+        Strategy("elliptic-static", model_kind="elliptic", adapt="never"),
+    ]
+    return grid + baselines
+
+
+# Which factor each strategy in the grid sits on, so results can be grouped by
+# model or by policy without re-parsing names at every call site.
+STRATEGY_FACTORS: dict[str, tuple[str, str]] = {
+    "hst-static": ("hst", "never"),
+    "hst-online": ("hst", "online"),
+    "hst-periodic": ("hst", "periodic"),
+    "hst-drift": ("hst", "drift"),
+    "iforest-static": ("iforest", "never"),
+    "iforest-periodic": ("iforest", "periodic"),
+    "iforest-drift": ("iforest", "drift"),
+    "lof-static": ("lof", "never"),
+    "ocsvm-static": ("ocsvm", "never"),
+    "elliptic-static": ("elliptic", "never"),
+    # The original four, kept so old result files still resolve.
+    "static": ("iforest", "never"),
+    "online-no-reset": ("hst", "online"),
+    "periodic": ("hst", "periodic"),
+    "drift-triggered": ("hst", "drift"),
+}
+
+
 @dataclass
 class RunConfig:
     """Settings shared by every strategy in a comparison."""
@@ -173,6 +231,97 @@ class StrategyRun:
     @property
     def n_adaptations(self) -> int:
         return len(self.adaptations)
+
+
+def _adaptation_points(
+    frame: pd.DataFrame,
+    strategy: Strategy,
+    monitor,
+    reference: "ReferenceStatistic",
+    warmup: int,
+) -> tuple[list[int], list[int]]:
+    """Where a non-online strategy rebuilds, found without scoring anything.
+
+    Returns (adaptations, detections) as absolute row indices. For `periodic`
+    this is arithmetic. For `drift` it is one pass of the reference statistic
+    through the monitor, which is a handful of numpy operations per row and
+    costs nothing next to scoring.
+
+    The rebuild window matches the streaming loop exactly: the deque there is
+    appended to before the adaptation check, so a rebuild at row i trains on
+    rows [i - warmup + 1, i + 1).
+    """
+    n = len(frame)
+    if strategy.adapt == "never":
+        return [], []
+
+    if strategy.adapt == "periodic":
+        step = strategy.retrain_every
+        points = list(range(warmup + step, n, step))
+        return points, []
+
+    assert monitor is not None
+    values = frame.to_numpy()
+    adaptations: list[int] = []
+    detections: list[int] = []
+    for i in range(warmup, n):
+        if monitor.update(reference.value(values[i])):
+            detections.append(i)
+            adaptations.append(i)
+            window = frame.iloc[max(0, i - warmup + 1) : i + 1]
+            reference.refit(window)
+            monitor.reset()
+    return adaptations, detections
+
+
+def _run_batched(
+    frame: pd.DataFrame,
+    strategy: Strategy,
+    model,
+    monitor,
+    reference: "ReferenceStatistic",
+    warmup: int,
+    scores: np.ndarray,
+    flags: np.ndarray,
+    thresholds: np.ndarray,
+    started: float,
+) -> "StrategyRun":
+    """Score a strategy that holds its model fixed between rebuilds.
+
+    Identical in output to the row-by-row loop; see the comment at its call site
+    for why the two can be separated.
+    """
+    n = len(frame)
+    adaptations, detections = _adaptation_points(
+        frame, strategy, monitor, reference, warmup
+    )
+
+    # Row i is scored before the adaptation check at row i, so a rebuild at row
+    # a first affects row a + 1. Segment k spans [bounds[k], bounds[k + 1]).
+    bounds = [warmup] + [a + 1 for a in adaptations] + [n]
+
+    for k in range(len(bounds) - 1):
+        lo, hi = bounds[k], bounds[k + 1]
+        if k > 0:
+            rebuild_at = adaptations[k - 1]
+            model.warm_up(frame.iloc[max(0, rebuild_at - warmup + 1) : rebuild_at + 1])
+        if hi <= lo:
+            continue
+        block_scores = model.score_many(frame.iloc[lo:hi])
+        scores[lo:hi] = block_scores
+        flags[lo:hi] = (block_scores > model.threshold).astype(int)
+        thresholds[lo:hi] = model.threshold
+
+    return StrategyRun(
+        strategy=strategy.name,
+        scores=scores,
+        flags=flags,
+        thresholds=thresholds,
+        adaptations=adaptations,
+        detections=detections,
+        eval_start=warmup,
+        seconds=time.perf_counter() - started,
+    )
 
 
 def run_strategy(
@@ -223,23 +372,31 @@ def run_strategy(
     adaptations: list[int] = []
     detections: list[int] = []
 
-    # A model that never adapts and never learns produces the same score for a
-    # given row no matter when it is asked, so the whole remainder can be scored
-    # in one vectorised call instead of a Python loop over 30,000 rows.
-    if strategy.adapt == "never" and not model.is_online:
-        block = frame.iloc[warmup:]
-        scores[warmup:] = model.score_many(block)
-        flags[warmup:] = (scores[warmup:] > model.threshold).astype(int)
-        thresholds[warmup:] = model.threshold
-        return StrategyRun(
-            strategy=strategy.name,
+    # Only the online control changes the model between rebuilds. For every
+    # other strategy the model is fixed within each inter-adaptation segment, so
+    # the segment can be scored in one vectorised call instead of a Python loop
+    # over tens of thousands of rows. This matters more than it sounds: scoring
+    # sklearn estimators one row at a time dominated the runtime of the whole
+    # multi-seed grid, and it buys the speedup without changing a single number,
+    # which `tests/test_batched_equivalence.py` checks directly.
+    #
+    # The step that makes it possible is that nothing in the adaptation schedule
+    # depends on the model's own scores. `periodic` is a fixed clock, and the
+    # drift monitor watches the input's distance from the reference window, not
+    # the anomaly score. So the adaptation points can be found in one cheap pass
+    # and the expensive scoring done afterwards, segment by segment.
+    if BATCHED_SCORING and not strategy.learn_online:
+        return _run_batched(
+            frame=frame,
+            strategy=strategy,
+            model=model,
+            monitor=monitor,
+            reference=reference,
+            warmup=warmup,
             scores=scores,
             flags=flags,
             thresholds=thresholds,
-            adaptations=adaptations,
-            detections=detections,
-            eval_start=warmup,
-            seconds=time.perf_counter() - started,
+            started=started,
         )
 
     records = frame.to_dict(orient="records")
@@ -318,6 +475,12 @@ class Scenario:
     has_true_anomalies: bool
     note: str = ""
     threshold_quantile: float = DEFAULT_THRESHOLD_QUANTILE
+    # Half-open [start, end) spans of the stream that came from separate source
+    # recordings, with a name each. The labelled SKAB stream is 16 recordings
+    # concatenated, and scoring each one separately gives genuine repeated
+    # measures: the same 16 units are seen by every strategy, so a paired test
+    # across them has real replication that a single concatenated F1 does not.
+    segments: list[tuple[int, int, str]] = field(default_factory=list)
     # When set, supersedes `threshold_quantile` (see src/thresholds.py).
     threshold_rule: str | None = None
 
@@ -372,11 +535,14 @@ def labelled_scenario(max_files: int | None = None) -> Scenario:
     if max_files is not None:
         filenames = filenames[:max_files]
 
-    frames, label_parts = [], []
+    frames, label_parts, segments = [], [], []
+    cursor = 0
     for filename in filenames:
         stream = load_skab_stream(LABELLED_GROUP, filename)
         frames.append(stream.frame)
         label_parts.append(stream.labels)
+        segments.append((cursor, cursor + len(stream.frame), filename))
+        cursor += len(stream.frame)
 
     frame = pd.concat(frames, ignore_index=True)
     labels = pd.concat(label_parts, ignore_index=True)
@@ -391,6 +557,7 @@ def labelled_scenario(max_files: int | None = None) -> Scenario:
             f"{len(filenames)} {LABELLED_GROUP} recordings concatenated; "
             "used for anomaly quality only, not drift timing"
         ),
+        segments=segments,
         # Permissive: roughly 35% of this stream is genuinely anomalous, so a
         # selective threshold caps recall far below anything useful. The sweep
         # confirmed 0.50 is where the adaptive strategies do best here.
