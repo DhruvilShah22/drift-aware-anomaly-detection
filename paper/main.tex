@@ -1,0 +1,333 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{natbib}
+\usepackage{caption}
+
+\bibliographystyle{plainnat}
+
+% Confidence intervals are set small and grey-free so they read as an
+% annotation on the mean and do not compete with it for attention.
+\newcommand{\ci}[2]{{\footnotesize $[#1,\,#2]$}}
+\newcommand{\yes}{yes}
+\newcommand{\no}{no}
+
+% Every number quoted in the prose comes from here, generated from results/*.csv
+% by scripts/make_paper_tables.py.
+\input{tables/numbers}
+
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{0pt}
+
+\title{Scoring conventions reorder adaptation policies in\\ streaming anomaly detection}
+
+\author{%
+  Dhruvil Shah\\
+  \texttt{contactshahdhruvil@gmail.com}
+}
+
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A streaming anomaly detector whose input distribution moves has to decide when
+to rebuild itself. We compare four answers to that question, holding everything
+else fixed: never rebuild, learn continuously, rebuild on a schedule, and
+rebuild when a drift detector fires. Running the comparison under four published
+scoring conventions on the same runs gives \NDistinctWinners{} different
+winners. \MoverName{} places \MoverPointRank{} of \NStrategies{} under
+point-wise F1 and \MoverCompositeRank{} under the composite F-score, on
+identical predictions. We report the comparison over \NSeeds{} seeds and the
+\NRecordings{} source recordings that carry a fault, with paired
+tests and Holm correction, and we cross the two factors that the usual
+presentation confounds: the anomaly model and the adaptation policy. The
+practical finding is that the adaptation question has no convention-independent
+answer on this data: every one of the \NStrategies{} strategies changes rank
+between point-wise and composite scoring, and the largest single move is
+\MaxRankJump{} places. Code, logs and every table in this paper regenerate
+from one command.
+\end{abstract}
+
+\section{Introduction}
+
+A detector trained once on a sensor stream goes wrong in one of two directions
+as the process it watches changes. If it never updates, ordinary operation
+drifts away from what it learned and it flags almost everything. If it updates
+continuously, it absorbs the change into its own idea of normal and goes quiet,
+so a fault that arrives slowly is learned rather than reported. Both failures
+are easy to build by accident and neither is visible in a single accuracy
+number.
+
+The question this raises is not whether anomalies can be detected but
+\emph{when the detector should update itself}. That question has an established
+shape: monitor the input, and when a change-detection test fires, rebuild. What
+it does not have is an established answer, because the evidence for one policy
+over another is usually a single number from a single run, scored under
+whichever convention the authors preferred.
+
+We built the comparison carefully enough to find out, and the result was not
+the one we set out to report. Our own earlier version of this work, run once at
+one seed and scored point-wise, concluded that a periodic rebuild schedule was
+best and that the continuously-learning control was broken. Both conclusions
+turned out to be properties of the scoring convention, not of the
+detectors. Under event-level scoring the control catches every fault in the
+stream, and the ranking of the policies rearranges.
+
+This paper reports that finding properly. Our contributions:
+
+\begin{enumerate}
+\item \textbf{A convention-crossed comparison.} The same runs are scored under
+  point-wise F1, the composite F-score of \citet{garg2021evaluation},
+  range-based precision and recall \citep{tatbul2018range}, and point-adjust
+  \citep{xu2018donut} with its PA\%K repair \citep{kim2022rigorous}. The
+  conventions disagree about which adaptation policy is best.
+\item \textbf{A factorial design.} Adaptation policy and anomaly model are
+  crossed, so a difference can be attributed to one or the other. The usual
+  presentation compares a static Isolation Forest against an adaptive
+  Half-Space Trees model and calls the difference adaptation.
+\item \textbf{Replication and paired tests.} Every result is repeated over
+  \NSeeds{} seeds and over the \NRecordings{} source recordings that carry a
+  fault. Comparisons are paired within a seed and within a recording,
+  with Holm correction over the family of comparisons we report.
+\item \textbf{Negative results stated as such.} Whether a strategy beats the
+  F1 obtained by flagging every single row is itself convention-dependent:
+  \NBeatPoint{} of \NStrategies{} clear it point-wise, \NBeatComposite{}
+  under the composite score, and \NBeatRange{} under range-based scoring. We
+  report the baseline beside every result instead of choosing the convention
+  that flatters ours.
+\end{enumerate}
+
+\section{Related work}
+
+\paragraph{Adapting to concept drift.} \citet{gama2014survey} organise the field
+into detectors that signal a change and learners that respond to one. ADWIN
+\citep{bifet2007adwin} keeps a window it cuts whenever two sub-windows differ
+enough in mean, which gives it a change point without a fixed window size.
+KSWIN \citep{raab2020kswin} runs a Kolmogorov-Smirnov test between a reference
+sample and a sliding one. The Page-Hinkley test \citep{page1954cusum} integrates
+a one-sided deviation and fires when the running sum exceeds a threshold. Larger
+comparisons of detectors exist \citep{barros2018largescale}, though they are
+usually framed around supervised classification error, not the unlabelled
+input statistic this project watches. Section~\ref{sec:monitoring} gives the
+reason for watching the input at all.
+
+\paragraph{Streaming anomaly detection.} Half-Space Trees \citep{tan2011hst}
+score a point by the mass of the region it falls into, over an ensemble of
+random trees with fixed feature ranges, and update in constant time per
+observation. Isolation Forest \citep{liu2008iforest} isolates points by random
+splits and is the usual static baseline. Local Outlier Factor
+\citep{breunig2000lof}, the one-class SVM \citep{scholkopf2001ocsvm} and the
+minimum covariance determinant estimator \citep{rousseeuw1999mcd} are the
+classical alternatives; none supports an incremental update, so for them
+adaptation can only mean a refit. More recent systems adapt by pooling models
+instead of resetting one \citep{yoon2022arcus}. We use the simpler reset
+because the object of study here is the policy, not the model.
+
+\paragraph{How these systems are scored.} This is where the field is least
+settled, and it is the part our results turn on. Point-wise F1 treats every row
+independently and rewards a detector for flagging every row of a long fault,
+which is not what an operator wants. \citet{xu2018donut} introduced point-adjust,
+under which one flagged row inside a true segment credits the detector with the
+whole segment; \citet{kim2022rigorous} showed that this inflates scores so far
+that random predictions beat published models, and proposed PA\%K, which only
+credits a segment when at least $K$ of it was flagged. \citet{tatbul2018range}
+give a range-based precision and recall that scores existence, overlap and
+fragmentation separately. \citet{garg2021evaluation} define a composite
+F-score that pairs point-wise precision with event-level recall.
+\citet{paparrizos2022vus} and \citet{huet2022affiliation} propose further
+alternatives. \citet{wu2023flawed} argue that several widely-used benchmarks,
+including the one we use as a second dataset, are flawed enough to create an
+illusion of progress.
+
+Our position is narrower than a survey of these proposals. We take four of them
+as given, apply them to one set of runs, and report that they do not agree about
+which adaptation policy to use. The disagreement is the result; we are not
+arguing that any one of the four is correct.
+
+\section{Setup}
+
+\subsection{Adaptation policies}
+
+Every policy sees the same stream, the same warm-up length and the same alarm
+threshold. The only thing that differs is when, or whether, the model is
+rebuilt.
+
+\begin{description}
+\item[never] The model is fitted once on the warm-up window and left alone.
+\item[online] The model keeps learning from every row and is never explicitly
+  rebuilt. It is a control and not a policy, and it matters: without it,
+  \emph{never} and \emph{periodic} would differ in the model as well as the
+  schedule.
+\item[periodic] The model is rebuilt every 1{,}000 rows, whether or not
+  anything has changed.
+\item[drift] The model is rebuilt when a drift monitor fires on the input.
+\end{description}
+
+Rebuilding always means the same operation: re-run warm-up on the most recent
+1{,}000 rows, which regenerates the model, its feature ranges and its threshold
+together. Between rebuilds every policy except \emph{online} holds the model
+fixed. A retraining policy that also learns continuously is not really a
+retraining policy, and in an earlier version of this work it collapsed into the
+control.
+
+\subsection{Models}
+
+Half-Space Trees is the online model. Isolation Forest, LOF, the one-class SVM
+and the MCD estimator are the static ones. Crossing the models with the policies
+gives the grid in Table~\ref{tab:main}; the three classical baselines appear
+only under \emph{never}, since they cannot be updated incrementally.
+
+Two implementation choices are worth stating because they are what makes the
+comparison mean anything. Feature ranges are fixed at warm-up and never
+rolled forward. The usual choice is a min-max scaler, but it adapts continuously and
+would absorb the drift before the model ever saw it, hiding the effect being
+measured. The alarm threshold is likewise a quantile of the warm-up scores, held
+until the next rebuild. Half-Space Trees normalises its raw score against a
+maximum that is essentially never reached, so scores sit in a narrow offset band
+and an absolute threshold is meaningless.
+
+\subsection{Drift monitoring}
+\label{sec:monitoring}
+
+The drift monitor watches the input, not the model's anomaly score. Watching the
+score is self-defeating for a learning model: it accommodates the shift, its
+score distribution does not move, and the detector never fires. In an earlier
+run that produced zero detections on the labelled stream. The monitored signal
+is the mean absolute $z$-score of the sensors, standardised against the window
+the model was last built on, so it answers ``has the world moved since this
+model was built''. The reference is refit on every rebuild.
+
+Because the adaptation schedule depends only on this input statistic and never
+on the model's scores, the schedule can be computed in one cheap pass and the
+expensive scoring done afterwards in blocks. Our implementation does this, and
+the two paths are asserted to produce identical flags, scores, thresholds and
+adaptation points in \texttt{tests/test\_batched\_equivalence.py}.
+
+\subsection{Thresholds}
+
+The alarm threshold is a quantile of the warm-up score distribution. It encodes
+how often anomalies are expected, and the two dataset families here differ by
+more than an order of magnitude in base rate, so a single value across both
+would not be a fair comparison but a badly calibrated detector on one of them.
+We use $q=0.50$ on the labelled SKAB stream, which is \BaseRate\% anomalous, and
+$q=0.98$ on the injected and NAB streams. Section~\ref{sec:transfer} measures
+what carrying one setting to a new dataset costs.
+
+\section{Evaluation conventions}
+
+We score every run four ways. Let the ground truth be a set of contiguous
+\emph{events} and the prediction a set of flagged rows.
+
+\paragraph{Point-wise.} Precision, recall and F1 over rows, each scored
+independently.
+
+\paragraph{Composite.} Point-wise precision with event-level recall: an event
+counts as recalled if any row inside it was flagged, while precision still pays
+for every false row. This is the composite F-score of
+\citet{garg2021evaluation}. We arrived at it independently before finding it in
+the literature, and our test suite asserts that the two definitions agree.
+
+\paragraph{Range-based.} The precision and recall of \citet{tatbul2018range},
+with a flat positional bias and the reciprocal cardinality factor, so a true
+range detected in many fragments scores below the same coverage detected in one.
+We report $\alpha = 0$, pure overlap, and give $\alpha = 1$, pure existence, as a
+sensitivity.
+
+\paragraph{Point-adjust.} The convention of \citet{xu2018donut}, and PA\%K at
+$K=0.2$ \citep{kim2022rigorous}. We report point-adjust to show what it does to
+our ranking, and we do not rely on it. On SKAB's fault blocks, which
+average about 390 rows, crediting a whole block for one flagged row is a very
+large gift.
+
+Every result is quoted against the F1 obtained by flagging every single row,
+which at a base rate $b$ is $2b/(1+b)$. On the labelled stream that is
+\FlagAll{}. An F1 in the low 0.5s means nothing next to it, and reporting one
+without it would be misleading.
+
+\section{Experimental design}
+
+\subsection{Data}
+
+\textbf{SKAB} \citep{katser2020skab} is a labelled industrial testbed with eight
+sensors. Our labelled stream concatenates 16 \texttt{valve1} recordings, giving
+\NRows{} scored rows at a \BaseRate\% anomaly rate; the individual recordings
+are too short to warm up on and still leave stream to measure. \NRecordings{}
+of the 16 contain a labelled fault and are scored separately in
+Section~\ref{sec:replication}; the remaining one has none, and an F1 on it
+would be zero for every strategy alike. The joins between recordings are real regime changes of unknown size,
+so this stream is used for anomaly quality only and never for drift timing.
+
+\textbf{Injected streams} are built by applying a known shift to SKAB's
+anomaly-free recording in four shapes: sudden, incremental, gradual and
+recurring. They contain no true anomalies by construction, which is what makes
+them useful: change points are known to the row, so timing is exact, and every
+flag raised is by definition a false alarm.
+
+\textbf{NAB} \citep{lavin2015nab} is the second dataset, used to test whether a
+calibration transfers. It differs from SKAB in the ways that would break one: it
+is univariate where SKAB has eight sensors, and roughly 10\% anomalous where
+SKAB is \BaseRate\%. We use \NNabSeries{} series long enough to warm up on.
+
+\subsection{Replication and pairing}
+
+Each run is repeated at \NSeeds{} seeds. A seed drives the model, the drift
+detector where it samples, and the stream itself wherever the stream is
+stochastic. Only the gradual injection draws randomly; the other three shapes
+are deterministic given the base recording, and we record which is which rather
+than implying more replication than exists.
+
+Runs are paired. At a given seed every strategy sees the same stream and the
+same warm-up, so a difference at that seed is attributable to the policy.
+Pairing matters here because the between-seed spread is larger than the gap
+between policies, and an unpaired test would be underpowered to the point of
+being misleading.
+
+There is a second unit of replication that we think is the more informative one.
+The labelled stream is 16 separate recordings concatenated, and every strategy
+is scored on each of the \NRecordings{} that contain a fault. Seeds ask whether a gap survives the
+randomness; recordings ask whether it survives the data. We report both, because
+a policy that is stable across seeds and unstable across recordings has not been
+shown to work.
+
+\subsection{Statistics}
+
+Intervals are percentile bootstrap intervals over 10{,}000 resamples
+\citep{efron1979bootstrap}. Comparisons use the Wilcoxon signed-rank test
+\citep{wilcoxon1945} on the paired differences, in place of a $t$-test, because
+the metrics are bounded, skewed and occasionally pinned at 0 or 1. We apply
+Holm-Bonferroni correction \citep{holm1979sequential} within each stream, over
+the family of comparisons the paper actually makes.
+
+One caveat is built into the reporting. With $n$ paired samples the smallest
+attainable two-sided $p$ from the exact signed-rank test is $2/2^n$, so below six
+pairs no effect of any size can reach $p<0.05$. Comparisons below that threshold
+are flagged as underpowered and never counted as significant, because a
+non-significant verdict there is a property of $n$ and not of the data
+\citep{demsar2006statistical}.
+
+\subsection{Implementation}
+
+The models come from \texttt{river} \citep{montiel2021river} and
+\texttt{scikit-learn} \citep{pedregosa2011sklearn}. The full grid runs on one
+laptop core. Section~\ref{sec:cost} reports throughput.
+
+%% ------------------------------------------------------------------
+%% RESULTS
+%% ------------------------------------------------------------------
+\input{sections/results}
+
+\input{sections/discussion}
+
+\bibliography{references}
+
+\end{document}

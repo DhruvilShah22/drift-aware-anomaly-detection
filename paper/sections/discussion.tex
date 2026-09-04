@@ -1,0 +1,138 @@
+\section{Discussion}
+
+\subsection{What a practitioner should take from this}
+
+The first decision in an evaluation is which convention to score under, and on
+this data that decision moves the answer more than the choice of adaptation
+policy does. It should therefore be made deliberately and stated. Inheriting it
+from whichever paper the code was adapted from is how it usually happens.
+
+The convention follows from what an alarm costs. If an operator investigates
+each alarm individually, every false row is paid for and point-wise precision is
+the quantity that matters. If an operator investigates each \emph{episode}, a
+detector that flags one row of a fault has done its job and the composite or
+range-based view describes the deployment better. These are different questions
+about the same predictions. Reporting one number without saying which question
+it answers leaves the reader to guess.
+
+The second suggestion is procedural. Quote a trivial baseline next to every
+score. At a base rate of \BaseRate\%, flagging every row scores \FlagAll{} under
+point-wise F1, which is higher than several published-looking numbers. We spent
+part of this project rediscovering that a detector can clear 0.5 F1 while doing
+nothing at all, and the baseline column is what stops that from happening
+quietly.
+
+The third point is about which number to read once both of those are settled.
+The strategy that wins our headline table on the mean is not the one we would
+deploy. \BestComposite{} takes the top place on average and still fails to beat
+the trivial baseline on \BestCompositeLosses{} of the \NRecordings{} individual
+recordings, with an interquartile range that straddles zero;
+\SteadiestName{} scores lower on average and fails on \SteadiestLosses{}. A mean
+over streams answers a question about a benchmark. An operator with one stream
+is asking a different question, and the spread across recordings is what answers
+it.
+
+\subsection{On the adaptation question itself}
+
+Stripped of the metric problem, the practical picture is narrower than
+``adaptive detection works better''. Rebuilding on a schedule and rebuilding on
+detected change both beat leaving the model alone, and the margin between the
+two is small next to the margin between either of them and the trivial
+baseline. The case for drift-triggered rebuilding is not that it scores higher.
+It is that it reacts to evidence and not to a clock, which lets it notice a
+sudden shift within a few rows instead of waiting for the next scheduled
+rebuild, and keeps it from rebuilding on a stream that has not moved.
+
+That argument is about the shape of the response, and Section~\ref{sec:timing}
+is where it is measured. It is a smaller claim than the one we expected to make
+when the project started.
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+These are constraints on what the numbers above can support, and several of them
+cut against our own results.
+
+\paragraph{The base recording is not stationary.} SKAB's anomaly-free recording
+has no annotated faults but the process drifts on its own. Running with no
+injected drift still produces adaptations, at nearly the same positions as with a
+3\,sd step injected. False-alarm counts on the injected streams are therefore an
+upper bound and not a measurement: some of those firings are the detector
+correctly noticing real process change for which we have no ground truth. For
+the same reason we do not report detection \emph{rate}, which comes out at 1.0
+for every magnitude including the zero control, because a firing always lands
+within the matching horizon of an arbitrary point.
+
+\paragraph{The labelled stream is concatenated.} The individual \texttt{valve1}
+recordings are about 1{,}000 rows, too short to warm up on and still leave stream
+to measure, so we join 16 of them. The joins are genuine regime
+changes of unknown magnitude. That is why this stream is used for anomaly
+quality only and never for drift timing, and it is why we also report per
+recording, where the joins are not inside the scored region.
+
+\paragraph{Event recall saturates.} SKAB's faults are long, so on the labelled
+stream every strategy catches every event and event-level recall is 1.0 across
+the board. Composite F1 there reduces to a precision-driven ranking. That is the
+correct operational picture, and it is what point-wise scoring obscured, but the
+recall axis carries no information on this particular stream. A benchmark with
+short, sparse anomalies is where it would.
+
+\paragraph{Two datasets, one of them contested.} \citet{wu2023flawed} argue that
+NAB and benchmarks like it are flawed enough to mislead. We use NAB only to ask
+whether a calibration transfers, which is a weaker use than ranking detectors on
+it, but the criticism still applies to Section~\ref{sec:transfer}. A wider study
+would add datasets designed after that critique.
+
+\paragraph{No deep or model-pooling baselines.} The comparison covers one online
+model, one static ensemble and three classical detectors. It does not include the
+autoencoder and model-pooling systems that dominate recent leaderboards
+\citep{yoon2022arcus}. Our claim is about how adaptation policies compare under
+different scoring conventions, not about the state of the art in raw detection
+quality, and the metric result is if anything more consequential for those
+systems, since they are usually reported under point-adjust.
+
+\paragraph{The threshold is a deployment choice.} It has to be set from the
+expected anomaly rate of the specific stream. We measured what carrying one
+setting across datasets costs instead of assuming it away, but no rule here
+removes the need to choose.
+
+\paragraph{One machine, one implementation.} Throughput in
+Section~\ref{sec:cost} is from a single laptop core and a specific pair of
+libraries. It supports statements about relative cost between the strategies and
+not about absolute deployability.
+
+\subsection{Reproducing this}
+
+Every number in this paper, including the ones in the prose, is generated from
+the committed CSV files by \texttt{scripts/make\_paper\_tables.py}; the
+manuscript contains no hand-typed values. The experiments regenerate with
+
+\begin{quote}
+\texttt{python scripts/run\_multiseed.py}\\
+\texttt{python scripts/run\_sweep.py -{}-seeds 5}\\
+\texttt{python scripts/run\_ablation.py}\\
+\texttt{python scripts/run\_throughput.py}\\
+\texttt{python scripts/make\_paper\_figures.py}\\
+\texttt{python scripts/make\_paper\_tables.py}
+\end{quote}
+
+Timing gets its own short run because it is the one measurement sensitive to
+what else the machine is doing, and the grid occupies a core for the better part
+of an hour.
+
+The full grid takes under an hour on one core. The test suite covers the metric
+implementations against hand-computed values, the statistics against constructed
+data with known answers, and the fast scoring path against the plain one.
+
+\section{Conclusion}
+
+We compared four adaptation policies for a streaming anomaly detector, crossed
+with the model they run on, repeated over \NSeeds{} seeds and \NRecordings{}
+recordings, and scored the same runs under four published conventions. The four
+conventions produce \NDistinctWinners{} different winners.
+
+The narrow finding is about one benchmark and one family of detectors. The
+general one is that a paper reporting a single scoring convention has not
+established which policy is better, only which policy that convention prefers.
+On the stream studied here, \MoverName{} moves from \MoverPointRank{} to
+\MoverCompositeRank{} of \NStrategies{} on identical predictions.
