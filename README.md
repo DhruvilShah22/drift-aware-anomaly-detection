@@ -10,6 +10,28 @@ green dots are flagged points, the dashed red line is an injected change, and th
 lower panel is alarm density. The detector notices the change **9 rows** after it
 happens, alarms while the model is stale, then settles once it rebuilds.*
 
+## The paper
+
+The study this repository supports is written up in [`paper/`](paper/):
+*Scoring conventions reorder adaptation policies in streaming anomaly
+detection*. It repeats the whole comparison over 10 seeds and the 16 source
+recordings, crosses the adaptation policy with the anomaly model instead of
+confounding them, adds three classical detectors as baselines, and scores the
+same runs under four published conventions. The conventions disagree about which
+policy is best, which is the paper's result.
+
+```bash
+python scripts/run_multiseed.py          # the grid the paper reports
+python scripts/make_paper_tables.py      # paper/tables/*.tex, from results/*.csv
+python scripts/make_paper_figures.py     # results/figures/paper/
+python scripts/build_paper_html.py       # paper/paper.html, print it to PDF
+```
+
+The manuscript contains no hand-typed numbers: every table and every figure is
+generated from the committed CSV files, and the prose quotes LaTeX macros that
+come from the same place. See [paper/README.md](paper/README.md) for how to
+build a PDF.
+
 ## The problem
 
 An anomaly detector trained once on a sensor stream goes wrong in one of two
@@ -65,10 +87,28 @@ python scripts/run_transfer.py       # ~215s, NAB transfer test
 python scripts/run_threshold_study.py  # ~495s, threshold rule comparison
 ```
 
+The experiments behind the paper, which repeat everything across seeds:
+
+```bash
+python scripts/run_multiseed.py      # the model x policy grid, 10 seeds
+python scripts/run_sweep.py --seeds 5  # drift detectors, repeated
+python scripts/run_ablation.py       # warm-up, horizon and cooldown sensitivity
+python scripts/run_throughput.py     # timing, on an otherwise quiet machine
+```
+
 Tested on Python 3.13. On Windows, launch the app with
 `python -m streamlit run app/streamlit_app.py`.
 
 ## Results
+
+> **The tables in this section come from a single run at one seed.** They are
+> kept because the rest of this README explains what they show and why. The
+> repeated version, with confidence intervals over 10 seeds and paired
+> significance tests, is in the paper and in `results/multiseed_summary.csv`.
+> Where the two disagree, the paper is the one to believe: several gaps that
+> look decisive below are inside the spread a policy shows when only the seed
+> changes.
+
 
 ### Alarm volume when normal shifts
 
@@ -379,15 +419,27 @@ absolute z-score of the sensors against the window the model was last built on.
 
 ```
 src/           data_loader (SKAB + NAB), drift_injection, models, detectors,
-               thresholds, evaluate, experiment, sweep
+               thresholds, evaluate, metrics_lit, stats, experiment, sweep,
+               multiseed
 app/           streamlit_app.py
 scripts/       download_data, run_smoke_test, run_experiment, run_tuning,
-               run_sweep, run_transfer, GIF export
+               run_sweep, run_transfer, run_multiseed, run_ablation,
+               run_throughput, make_paper_tables, make_paper_figures,
+               build_paper_html, GIF export
+paper/         main.tex, sections/, tables/ (generated), references.bib
 notebooks/     kaggle_experiment.ipynb
 results/       metrics.csv, sweep.csv, tuning.csv, transfer.csv,
-               threshold_study.csv, figures/, demo.gif
-tests/         100 tests
+               threshold_study.csv, multiseed*.csv, significance.csv,
+               ablation_*.csv, figures/, demo.gif
+tests/         263 tests
 ```
+
+Three modules were added for the paper and are worth naming separately.
+`metrics_lit.py` implements the published scoring conventions, so the results
+can be read against the literature rather than only against each other.
+`stats.py` does the bootstrap intervals and the paired tests. `multiseed.py` is
+the harness that repeats a comparison across seeds and across the source
+recordings.
 
 `results/demo.gif` is a screen capture of the running dashboard.
 `results/demo_animation.gif` shows all four strategies together and regenerates

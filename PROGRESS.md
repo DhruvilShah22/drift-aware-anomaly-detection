@@ -620,6 +620,103 @@ false alarms per 1000 steps is worth losing incremental coverage for. The projec
 default is left as `adwin` so committed figures and the demo cache stay valid, but
 the recommendation in the README is now `adwin_meanvar`.
 
+### 2026-09-04 — Repeated every experiment, added published metrics, wrote it up
+
+The project reached its stated goal in July and then sat on a foundation that
+could not carry a paper: every table in the README came from **one run at seed
+42**. That is enough to demonstrate a working system and not enough to say that
+one adaptation policy beats another, because nothing in it separates a real gap
+from the spread a policy shows when only the seed moves. This entry is the work
+that fixed that, and it changed the conclusions.
+
+#### What was added
+
+**Published scoring conventions (`src/metrics_lit.py`).** The event-level metric
+this project invented in July turns out to be the **composite F-score** of Garg
+et al. (2021) — same definition, arrived at independently. Rather than keep
+claiming a homemade metric, the module now implements four published ones and
+scores every run under all of them: point-wise, composite, range-based (Tatbul
+et al. 2018) and point-adjust (Xu et al. 2018) with the PA%K repair (Kim et al.
+2022). A test asserts that `composite_f` and our own `event_metrics` agree, so
+the equivalence is checked rather than asserted.
+
+**Statistics (`src/stats.py`).** Percentile bootstrap intervals, paired Wilcoxon
+signed-rank tests, and Holm-Bonferroni correction. One detail worth recording:
+below six paired samples the exact signed-rank test cannot reach p < 0.05 at any
+effect size, because its smallest attainable two-sided p is 2/2^n. Comparisons
+under that are flagged `underpowered` and never counted as significant, since a
+non-significant verdict there is a property of n rather than of the data.
+
+**Three classical baselines (`src/models.py`).** LOF, one-class SVM and the MCD
+estimator, standardised on the warm-up window. They answer the obvious
+objection: is the adaptation result an artefact of using Half-Space Trees and
+Isolation Forest? All three are unavoidably static — none supports an
+incremental update — which is itself the honest reason the adaptation study uses
+HST.
+
+**A factorial design (`experiment.factorial_strategies`).** The original four
+strategies had a confound that only became visible while writing the comparison
+down: `static` was an Isolation Forest while `periodic` and `drift-triggered`
+were Half-Space Trees, so those rows differed in the model *and* the policy. The
+grid now crosses them.
+
+**Per-recording replication.** The labelled stream is 16 valve1 recordings
+concatenated, and every strategy is scored on each one separately. Seeds ask
+whether a gap survives the randomness; recordings ask whether it survives the
+data. The second turned out to be the harder test.
+
+**Page-Hinkley** joined the detector sweep. The DDM/EDDM/HDDM family is
+deliberately not wrapped: they consume a stream of binary classification errors,
+and this project monitors an unlabelled input statistic, so there is no error
+stream to give them.
+
+#### Two optimisations that made the grid affordable
+
+Neither changes a single number; both are covered by equivalence tests.
+
+**Batched scoring.** Only the online control changes its model between rebuilds.
+For every other strategy the model is fixed within each inter-adaptation
+segment, so the segment can be scored in one vectorised call. What makes this
+sound is that nothing in the adaptation schedule depends on the model's own
+scores — `periodic` is a fixed clock and the drift monitor watches the input —
+so the schedule can be found in one cheap pass and the scoring done afterwards.
+Measured speedup on a 3,438-row stream: **103x** for a static Isolation Forest,
+44x for periodic, 22x for drift-triggered, 19x for LOF.
+`tests/test_batched_equivalence.py` asserts identical flags, scores, thresholds,
+adaptation points and detection points down both paths, for eight strategies.
+
+**Vectorised `to_events` and range-based scoring.** `to_events` was a Python
+scan called about seventy times per strategy per seed; it is now a diff over a
+padded array, 7x faster and identical on 406 randomised cases. Range-based
+precision under a flat bias reduces to a prefix sum plus two `searchsorted`
+calls, which took `all_metrics` from **1.27s to 0.069s** on a 17,160-row stream,
+with zero mismatches over 1,800 comparisons against the loop implementation.
+
+#### A bug the write-up caught
+
+The paper's headline table quotes every strategy against the flag-everything
+baseline. The first version of the table generator hardcoded that baseline's
+range-based F1 as **1.000**. It is not. Flagging every row produces a *single*
+predicted range spanning the stream, and the cardinality factor divides its
+precision by the number of true events it swallows, so the real value is around
+**0.045**. Hardcoding it would have flattered every detector in the table. The
+baseline row is now computed from the labels with the same code path as
+everything else.
+
+#### The finding
+
+Scored four ways, the same runs give different winners. The ranking of the
+adaptation policies depends on the scoring convention, and on this data it
+depends on it more than it depends on the policy. Under range-based scoring in
+particular, most strategies fall *below* the trivial baseline, because they emit
+thousands of fragmented predicted ranges and the cardinality factor charges them
+for it.
+
+That is the paper: `paper/main.tex`, with every table and every number in the
+prose generated from `results/*.csv` by `scripts/make_paper_tables.py`. The
+manuscript contains no hand-typed values, so regenerating the experiments
+regenerates the paper.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:
