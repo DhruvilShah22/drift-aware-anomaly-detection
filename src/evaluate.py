@@ -195,20 +195,23 @@ def to_events(labels) -> list[tuple[int, int]]:
 
     A ground-truth fault that spans rows 100..149 inclusive is one event
     ``(100, 150)``, not fifty. Everything event-level is built on this.
+
+    Written with numpy rather than a scan because it turned out to be the
+    bottleneck of the whole multi-seed grid: every metric in `metrics_lit.py`
+    calls it, so a stream of 17,000 rows was being walked in Python some seventy
+    times per strategy per seed. The pairs it returns are unchanged, which
+    `tests/test_evaluate.py` covers.
     """
     a = np.asarray(labels).astype(int)
-    events: list[tuple[int, int]] = []
-    i, n = 0, len(a)
-    while i < n:
-        if a[i] == 1:
-            j = i
-            while j < n and a[j] == 1:
-                j += 1
-            events.append((i, j))
-            i = j
-        else:
-            i += 1
-    return events
+    if a.size == 0:
+        return []
+    # Pad with zeros at both ends so a run touching either boundary still shows
+    # up as a rising and a falling edge in the difference.
+    padded = np.concatenate(([0], a, [0]))
+    edges = np.diff(padded)
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    return list(zip(starts.tolist(), ends.tolist()))
 
 
 def event_metrics(y_true, y_pred, tolerance: int = 0) -> EventMetrics:
