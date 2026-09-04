@@ -28,7 +28,7 @@ from functools import partial
 import numpy as np
 from river import drift
 
-DETECTOR_KINDS = ("adwin", "kswin", "adwin_var", "adwin_meanvar")
+DETECTOR_KINDS = ("adwin", "kswin", "adwin_var", "adwin_meanvar", "pagehinkley")
 
 # Steps to ignore further detections after one fires. Roughly the warm-up
 # length, so an adaptation completes before another can be triggered.
@@ -216,6 +216,19 @@ def build_detector(
         # ADWINs.
         window = kwargs.pop("window", DEFAULT_DISPERSION_WINDOW)
         factory = partial(MeanOrVariance, window=window, **kwargs)
+    elif kind == "pagehinkley":
+        # A cumulative-sum test on the running mean, and the oldest of the
+        # detectors here. It is the natural third comparator: ADWIN adapts its
+        # window, KSWIN compares distributions, Page-Hinkley integrates a
+        # one-sided deviation and fires when the integral exceeds a threshold.
+        # Its `threshold` and `delta` are left at river's defaults so it gets
+        # the same untuned treatment as the others.
+        #
+        # The DDM/EDDM/HDDM family in `river.drift.binary` is deliberately not
+        # wrapped: those consume a stream of binary classification errors, and
+        # this project monitors an unlabelled input statistic, so there is no
+        # error stream to give them.
+        factory = partial(drift.PageHinkley, **kwargs)
     elif kind == "kswin":
         # KSWIN samples from its reference window, so it needs a seed to be
         # reproducible; ADWIN is deterministic and takes none.

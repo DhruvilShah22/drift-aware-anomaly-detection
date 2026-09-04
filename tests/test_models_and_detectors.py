@@ -173,8 +173,12 @@ def test_detectors_react_promptly_to_a_real_shift(kind):
 # on the worst case, not a claim about its operating behaviour.
 # adwin_meanvar is the OR of the mean and variance branches, so on white noise it
 # inherits the variance branch's chattiness (the mean branch is silent here).
+# Page-Hinkley sits between the two: its cumulative sum needs a sustained
+# one-sided deviation to trip, so white noise sets it off far less than KSWIN
+# but more than ADWIN (1-5 firings over the same five seeds).
 STATIONARY_FALSE_ALARM_BUDGET = {
     "adwin": 0, "kswin": 15, "adwin_var": 25, "adwin_meanvar": 25,
+    "pagehinkley": 12,
 }
 
 
