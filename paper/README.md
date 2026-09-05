@@ -14,6 +14,7 @@ detection*.
 | `tables/numbers.tex` | **Generated.** Every number the prose quotes, as macros. |
 | `references.bib` | Bibliography. |
 | `paper.html` | **Generated.** Standalone render, for printing to PDF locally. |
+| `Drift-Aware Anomaly Detection Scoring Conventions Research Paper.pdf` | **Generated.** The deposit copy, rendered from `paper.html`. |
 
 Nothing in `tables/` is edited by hand. `main.tex` quotes `\FlagAll` rather than
 `0.512`, so a sentence cannot end up disagreeing with the table beside it, and an
