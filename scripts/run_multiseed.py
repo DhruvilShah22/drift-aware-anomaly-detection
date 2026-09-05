@@ -39,6 +39,7 @@ from src.experiment import (  # noqa: E402
     factorial_strategies,
     labelled_scenario,
     nab_scenario,
+    ucr_scenarios,
 )
 from src.multiseed import injected_seed_runs, labelled_seed_runs  # noqa: E402
 from src.stats import holm_bonferroni, paired_compare, summarise_seeds  # noqa: E402
@@ -79,8 +80,18 @@ KEY_COMPARISONS = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=int, default=10, help="how many seeds to run")
-    parser.add_argument("--skip-nab", action="store_true", help="SKAB only")
+    parser.add_argument("--skip-nab", action="store_true", help="skip the NAB series")
+    parser.add_argument("--skip-ucr", action="store_true", help="skip the UCR series")
+    parser.add_argument(
+        "--ucr-series", type=int, default=8, help="how many UCR series to run"
+    )
     parser.add_argument("--skip-drift", action="store_true", help="skip injected streams")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="keep streams already present in results/multiseed.csv and run only "
+             "the missing ones",
+    )
     parser.add_argument(
         "--max-files",
         type=int,
@@ -139,11 +150,44 @@ def main() -> int:
     strategies = factorial_strategies()
     RESULTS.mkdir(exist_ok=True)
 
+    n_streams = 1
+    if not args.skip_nab:
+        n_streams += len(NAB_SERIES)
+    if not args.skip_ucr:
+        n_streams += args.ucr_series
     print(
-        f"Multi-seed grid: {len(strategies)} strategies x {len(seeds)} seeds"
-        f"{'' if args.skip_nab else f' x {1 + len(NAB_SERIES)} streams'}"
+        f"Multi-seed grid: {len(strategies)} strategies x {len(seeds)} seeds "
+        f"x {n_streams} streams"
     )
     started = time.perf_counter()
+
+    # Resuming. The grid takes the better part of an hour and this machine
+    # slept through the middle of one, killing it after seven of fifteen
+    # streams. Every completed stream was already checkpointed, so the only
+    # thing missing was a way to keep them.
+    prior_streams, prior_segments = pd.DataFrame(), pd.DataFrame()
+    done_streams: set[str] = set()
+    if args.resume:
+        prior_path = RESULTS / "multiseed.csv"
+        if prior_path.exists():
+            prior_streams = pd.read_csv(prior_path)
+            # Refuse to splice together runs that used different settings: the
+            # result would look like one experiment and not be one.
+            prior_seeds = set(prior_streams.seed.unique())
+            prior_strategies = set(prior_streams.strategy.unique())
+            wanted_strategies = {s.name for s in strategies}
+            if prior_seeds != set(seeds) or prior_strategies != wanted_strategies:
+                raise SystemExit(
+                    "cannot resume: the existing results used seeds "
+                    f"{sorted(prior_seeds)} and {len(prior_strategies)} strategies, "
+                    f"but this run wants {sorted(seeds)} and {len(wanted_strategies)}. "
+                    "Delete results/multiseed.csv to start over."
+                )
+            done_streams = set(prior_streams.stream.unique())
+            segment_path = RESULTS / "multiseed_segments.csv"
+            if segment_path.exists():
+                prior_segments = pd.read_csv(segment_path)
+            print(f"resuming: keeping {len(done_streams)} completed streams")
 
     stream_frames, segment_frames = [], []
 
@@ -155,28 +199,37 @@ def main() -> int:
         Each completed stream is flushed to the same files the run would have
         written anyway, so an interrupted run leaves usable partial results.
         """
-        if stream_frames:
-            pd.concat(stream_frames, ignore_index=True).to_csv(
+        parts = ([prior_streams] if not prior_streams.empty else []) + stream_frames
+        if parts:
+            pd.concat(parts, ignore_index=True).to_csv(
                 RESULTS / "multiseed.csv", index=False
             )
-        usable = [f for f in segment_frames if not f.empty]
+        usable = ([prior_segments] if not prior_segments.empty else []) + [
+            f for f in segment_frames if not f.empty
+        ]
         if usable:
             pd.concat(usable, ignore_index=True).to_csv(
                 RESULTS / "multiseed_segments.csv", index=False
             )
 
-    print("\nSKAB valve1 (labelled):")
     skab = labelled_scenario(max_files=args.max_files)
-    skab_stream, skab_segments = labelled_seed_runs(
-        skab, strategies, seeds=seeds, config=RunConfig()
-    )
-    stream_frames.append(skab_stream)
-    segment_frames.append(skab_segments)
-    checkpoint()
+    if skab.name in done_streams:
+        print(f"\nSKAB valve1: already done, skipping")
+    else:
+        print("\nSKAB valve1 (labelled):")
+        skab_stream, skab_segments = labelled_seed_runs(
+            skab, strategies, seeds=seeds, config=RunConfig()
+        )
+        stream_frames.append(skab_stream)
+        segment_frames.append(skab_segments)
+        checkpoint()
 
     if not args.skip_nab:
         for key in NAB_SERIES:
             name = key.split("/")[-1].replace(".csv", "")
+            if name in done_streams:
+                print(f"\nNAB {name}: already done, skipping")
+                continue
             print(f"\nNAB {name}:")
             # 0.98 is the SKAB-family setting carried over unchanged. Holding it
             # fixed is the point: this measures what transfer costs, so retuning
@@ -188,9 +241,29 @@ def main() -> int:
             stream_frames.append(rows)
             checkpoint()
 
-    stream_rows = pd.concat(stream_frames, ignore_index=True)
+    if not args.skip_ucr:
+        # One anomaly per series, so the proportion of series whose anomaly is
+        # found at all is a real recall measurement rather than a saturated 1.0.
+        for scenario in ucr_scenarios(n_series=args.ucr_series):
+            if scenario.name in done_streams:
+                print(f"\n{scenario.name}: already done, skipping")
+                continue
+            print(f"\n{scenario.name} ({len(scenario.frame):,} rows, {scenario.note}):")
+            rows, _ = labelled_seed_runs(
+                scenario, strategies, seeds=seeds, config=RunConfig()
+            )
+            stream_frames.append(rows)
+            checkpoint()
+
+    all_stream_parts = ([prior_streams] if not prior_streams.empty else []) + stream_frames
+    stream_rows = pd.concat(all_stream_parts, ignore_index=True)
+    all_segment_parts = ([prior_segments] if not prior_segments.empty else []) + [
+        f for f in segment_frames if not f.empty
+    ]
     segment_rows = (
-        pd.concat(segment_frames, ignore_index=True) if segment_frames else pd.DataFrame()
+        pd.concat(all_segment_parts, ignore_index=True)
+        if all_segment_parts
+        else pd.DataFrame()
     )
 
     stream_rows.to_csv(RESULTS / "multiseed.csv", index=False)

@@ -1,9 +1,12 @@
 """Loading and verifying the real sensor datasets this project runs on.
 
-The only dataset used here is SKAB (Skoltech Anomaly Benchmark), a set of
-labelled multivariate sensor recordings from a water-circulation testbed. Files
-are pulled straight from the project's public GitHub repository and cached on
-disk, so a download only ever happens once.
+Three datasets are loaded here. SKAB (Skoltech Anomaly Benchmark) is a set of
+labelled multivariate sensor recordings from a water-circulation testbed; NAB is
+a univariate collection used to test whether a calibration transfers; and the
+UCR Anomaly Archive is 250 univariate series with exactly one anomaly each,
+built by Wu and Keogh as a replacement for benchmarks they argued were flawed.
+Files are pulled from their public sources and cached on disk, so a download
+only ever happens once.
 
 Every loader in this module verifies what it read: the expected columns are
 present, the labels are binary, and the frame is non-empty. I would rather a run
@@ -14,6 +17,7 @@ experiments.
 from __future__ import annotations
 
 import io
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -345,6 +349,338 @@ def expand_windows_to_labels(
             "timestamps, which means the labels were not applied correctly"
         )
     return labels
+
+
+# --------------------------------------------------------------------------
+# UCR Anomaly Archive
+# --------------------------------------------------------------------------
+#
+# The third dataset, and the one that exists because of the critique this
+# project cites. Wu and Keogh (2021) argued that NAB and benchmarks like it are
+# flawed enough to create an illusion of progress, and released this archive as
+# a replacement: 250 univariate series, each carrying **exactly one** anomaly,
+# with a guaranteed anomaly-free training prefix.
+#
+# That construction is what makes it worth the download here. On SKAB and NAB
+# every strategy catches every labelled event, so event-level recall is 1.0
+# across the board and the composite score collapses to a precision ranking.
+# With one short anomaly per series, a detector either finds it or it does not,
+# and the recall axis finally carries information.
+#
+# Everything a loader needs is in the file name:
+#
+#     136_UCR_Anomaly_InternalBleeding16_1200_4187_4197.txt
+#     |   |           |                  |    |    |
+#     |   |           |                  |    |    anomaly end   (1-based, inclusive)
+#     |   |           |                  |    anomaly start (1-based, inclusive)
+#     |   |           |                  last index of the clean training prefix
+#     |   |           series name
+#     |   archive marker
+#     index within the archive
+#
+# The body is one float per line. We parse the name rather than trusting a side
+# file, and then check the parse against the data: the anomaly has to lie inside
+# the series, after the training prefix, and be a single contiguous run.
+
+UCR_ARCHIVE_URL = (
+    "https://www.cs.ucr.edu/~eamonn/time_series_data_2018/"
+    "UCR_TimeSeriesAnomalyDatasets2021.zip"
+)
+UCR_ZIP = RAW_DIR / "ucr" / "UCR_TimeSeriesAnomalyDatasets2021.zip"
+UCR_VALUE_COLUMN = "value"
+
+
+@dataclass(frozen=True)
+class UcrSeries:
+    """What the archive's file name says about one series."""
+
+    member: str
+    index: int
+    name: str
+    train_end: int
+    anomaly_start: int
+    anomaly_end: int
+
+    @property
+    def anomaly_length(self) -> int:
+        return self.anomaly_end - self.anomaly_start + 1
+
+    @property
+    def slug(self) -> str:
+        return f"{self.index:03d}_{self.name}"
+
+
+def _archive_is_complete(path: Path) -> bool:
+    """Is this a whole, readable zip rather than a download in progress?
+
+    Size alone does not answer that. A zip stores its central directory at the
+    *end* of the file, so a partial download of an 184 MB archive is a perfectly
+    plausible 150 MB file that no zip reader can open. We learned that the
+    obvious way: a size threshold accepted a file at 84% and the selection step
+    died on BadZipFile.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return bool(zf.namelist())
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
+# The archive is served from a university host that drops long connections. A
+# single-shot download of 184 MB timed out at 165 MB the first time, so the
+# fetch resumes with a Range request instead of starting over.
+UCR_DOWNLOAD_ATTEMPTS = 12
+
+
+def _ensure_ucr_archive(timeout: int = 120, attempts: int = UCR_DOWNLOAD_ATTEMPTS) -> Path:
+    """Download the archive once, resuming if the connection drops.
+
+    Bytes accumulate in a `.part` file that is renamed only once it opens as a
+    zip, so an interrupted run can never leave a half-file that a later run
+    mistakes for a complete one.
+    """
+    if _archive_is_complete(UCR_ZIP):
+        return UCR_ZIP
+
+    UCR_ZIP.parent.mkdir(parents=True, exist_ok=True)
+    partial = UCR_ZIP.with_suffix(".zip.part")
+
+    # A previous truncated attempt may have left a full-looking file behind.
+    if UCR_ZIP.exists() and not _archive_is_complete(UCR_ZIP):
+        UCR_ZIP.unlink()
+
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        have = partial.stat().st_size if partial.exists() else 0
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        try:
+            with requests.get(
+                UCR_ARCHIVE_URL, stream=True, timeout=timeout, headers=headers
+            ) as response:
+                # 416 means we already asked for everything there is.
+                if response.status_code == 416:
+                    break
+                response.raise_for_status()
+                # A server that ignores Range restarts the file, so the local
+                # bytes have to be discarded rather than appended to.
+                mode = "ab" if (have and response.status_code == 206) else "wb"
+                with open(partial, mode) as handle:
+                    for chunk in response.iter_content(1 << 20):
+                        handle.write(chunk)
+        except requests.RequestException as exc:
+            last_error = exc
+            continue
+
+        if _archive_is_complete(partial):
+            break
+
+    if not _archive_is_complete(partial):
+        size = partial.stat().st_size if partial.exists() else 0
+        raise DatasetError(
+            f"the UCR archive stopped at {size} bytes after {attempts} attempts "
+            f"and is not a readable zip"
+            + (f"; last error: {last_error}" if last_error else "")
+        )
+
+    partial.replace(UCR_ZIP)
+    return UCR_ZIP
+
+
+def _parse_ucr_name(member: str) -> UcrSeries | None:
+    """Pull the split points out of an archive file name.
+
+    Returns None for anything that does not match the convention, so a stray
+    file in the zip is skipped rather than crashing the listing.
+    """
+    stem = Path(member).stem
+    parts = stem.split("_")
+    if len(parts) < 6:
+        return None
+    try:
+        index = int(parts[0])
+        train_end, start, end = (int(parts[-3]), int(parts[-2]), int(parts[-1]))
+    except ValueError:
+        return None
+
+    name = "_".join(parts[3:-3]) or stem
+    return UcrSeries(
+        member=member,
+        index=index,
+        name=name,
+        train_end=train_end,
+        anomaly_start=start,
+        anomaly_end=end,
+    )
+
+
+def list_ucr_series() -> list[UcrSeries]:
+    """Every series in the archive, parsed from its file name."""
+    archive = _ensure_ucr_archive()
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            members = [n for n in zf.namelist() if n.lower().endswith(".txt")]
+    except zipfile.BadZipFile as exc:
+        raise DatasetError(f"the UCR archive at {archive} is not a valid zip: {exc}") from exc
+
+    series = [s for s in (_parse_ucr_name(m) for m in members) if s is not None]
+    if not series:
+        raise DatasetError(
+            f"the UCR archive contains {len(members)} .txt files but none matched "
+            "the expected <index>_UCR_Anomaly_<name>_<train>_<start>_<end> convention"
+        )
+    return sorted(series, key=lambda s: s.index)
+
+
+def load_ucr_stream(series: UcrSeries | str, use_cache: bool = True) -> StreamData:
+    """Load one UCR series as a verified `StreamData`.
+
+    Accepts either the parsed record or the archive member name.
+    """
+    if isinstance(series, str):
+        parsed = _parse_ucr_name(series)
+        if parsed is None:
+            raise DatasetError(f"{series!r} does not match the UCR naming convention")
+        series = parsed
+
+    cache_path = CACHE_DIR / f"ucr_{series.slug}.parquet"
+    if use_cache and cache_path.exists():
+        frame = pd.read_parquet(cache_path)
+    else:
+        archive = _ensure_ucr_archive()
+        with zipfile.ZipFile(archive) as zf:
+            raw = zf.read(series.member)
+        # One value per line in most files, whitespace-separated in a few.
+        try:
+            values = [float(tok) for tok in raw.split()]
+        except ValueError as exc:
+            raise DatasetError(f"{series.member} contains a non-numeric value: {exc}") from exc
+        if not values:
+            raise DatasetError(f"{series.member} is empty")
+        frame = pd.DataFrame({UCR_VALUE_COLUMN: values}, dtype=float)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(cache_path)
+
+    n = len(frame)
+    if frame[UCR_VALUE_COLUMN].isna().any():
+        raise DatasetError(f"{series.member} contains missing values")
+
+    # Check the file name against the file body rather than trusting it. A name
+    # that points past the end of its own series would otherwise produce an
+    # all-zero label vector and look like a clean stream.
+    if not 0 < series.anomaly_start <= series.anomaly_end <= n:
+        raise DatasetError(
+            f"{series.member} claims an anomaly at [{series.anomaly_start}, "
+            f"{series.anomaly_end}] but the series has {n} points"
+        )
+    if series.train_end >= series.anomaly_start:
+        raise DatasetError(
+            f"{series.member} places its anomaly at {series.anomaly_start}, inside "
+            f"the training prefix that ends at {series.train_end}; the archive "
+            "guarantees the prefix is clean"
+        )
+
+    labels = pd.Series(0, index=frame.index, dtype=int)
+    # The file name uses 1-based inclusive positions.
+    labels.iloc[series.anomaly_start - 1 : series.anomaly_end] = 1
+    if labels.sum() != series.anomaly_length:
+        raise DatasetError(
+            f"{series.member} labelled {int(labels.sum())} rows where its name "
+            f"implies {series.anomaly_length}"
+        )
+
+    return StreamData(name=series.slug, frame=frame, labels=labels)
+
+
+# Variants of one source signal appear in the archive under names that differ
+# only by a corruption prefix or an ordinal. Collapsing them matters: a first
+# attempt at the subset came back with five `Tkeep*MARS` series and two `BIDMC`
+# series out of twelve, which is a study of two signals wearing a disguise.
+UCR_VARIANT_PREFIXES = ("DISTORTED", "NOISE")
+UCR_ORDINAL_WORDS = (
+    "first", "second", "third", "fourth", "forth", "fifth", "sixth",
+    "seventh", "eighth", "ninth", "tenth",
+)
+
+
+def ucr_base_name(name: str) -> str:
+    """The source signal a series name refers to, ignoring variant markers.
+
+    `DISTORTEDTkeepFifthMARS`, `TkeepFirstMARS` and `NOISETkeepMARS2` all reduce
+    to `tkeepmars`.
+    """
+    stripped = name
+    for prefix in UCR_VARIANT_PREFIXES:
+        if stripped.upper().startswith(prefix):
+            stripped = stripped[len(prefix):]
+            break
+    lowered = stripped.lower()
+    for word in UCR_ORDINAL_WORDS:
+        lowered = lowered.replace(word, "")
+    return lowered.rstrip("0123456789_") or stripped.lower()
+
+
+def select_ucr_series(
+    n_series: int = 12,
+    max_rows: int = 12_000,
+    min_train: int = 1_200,
+    max_anomaly_fraction: float = 0.10,
+) -> list[UcrSeries]:
+    """A deterministic, documented subset of the archive.
+
+    Running the full 250 series through the model-by-policy grid at ten seeds is
+    not affordable on one core, so a subset is taken. The rule is fixed and
+    stated rather than tuned:
+
+    - the series must fit in `max_rows`, which bounds the runtime;
+    - its clean training prefix must be at least `min_train`, so the warm-up
+      window never straddles the anomaly;
+    - its anomaly must be a small fraction of the series, which is what the
+      archive is for and keeps the trivial baseline low;
+    - at most one series per base signal, with variant prefixes and ordinals
+      normalised away by `ucr_base_name`, so the subset is not five recordings
+      of the same instrument;
+    - then the lowest archive indices, so the choice does not depend on any
+      result.
+
+    A base signal is only consumed once a series actually passes every check.
+    An earlier version reserved the name as soon as the cheap filters passed,
+    which meant one over-long recording of a signal discarded every shorter
+    recording of it too, and the subset came back a third the size it should
+    have been.
+    """
+    chosen: list[UcrSeries] = []
+    seen_names: set[str] = set()
+
+    for series in list_ucr_series():
+        if len(chosen) >= n_series:
+            break
+        if series.train_end < min_train:
+            continue
+        # Cheap bound before paying to read the series: the anomaly cannot end
+        # past the last row, so a late anomaly means a long recording.
+        if series.anomaly_end > max_rows:
+            continue
+        base = ucr_base_name(series.name)
+        if base in seen_names:
+            continue
+
+        stream = load_ucr_stream(series)
+        if stream.n_rows > max_rows:
+            continue
+        if series.anomaly_length / stream.n_rows > max_anomaly_fraction:
+            continue
+
+        seen_names.add(base)
+        chosen.append(series)
+
+    if len(chosen) < n_series:
+        raise DatasetError(
+            f"only {len(chosen)} UCR series met the selection rule "
+            f"(wanted {n_series}); loosen max_rows or min_train"
+        )
+    return chosen
 
 
 def save_sample(stream: StreamData, n_rows: int = 2000) -> Path:

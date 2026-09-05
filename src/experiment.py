@@ -615,6 +615,68 @@ def nab_scenario(
     )
 
 
+# The UCR Anomaly Archive subset. Chosen by the fixed rule in
+# `data_loader.select_ucr_series`, not by anything we measured.
+#
+# Eight rather than a rounder number because that is where the archive divides.
+# Its 251 files cover only 42 distinct source signals, and the shortest
+# recording of each falls into two groups: eight between 6,700 and 12,000 rows,
+# then nothing until 24,667. Taking the short group keeps the grid affordable;
+# reaching twelve signals would mean a 30,000-row cap and roughly two and a half
+# times the runtime for four more series.
+UCR_N_SERIES = 8
+UCR_MAX_ROWS = 12_000
+
+
+def ucr_scenario(
+    series,
+    threshold_quantile: float = 0.98,
+    threshold_rule: str | None = None,
+) -> Scenario:
+    """One UCR series, which carries exactly one anomaly.
+
+    This is the stream family where event-level recall finally means something.
+    On SKAB and NAB every strategy catches every labelled event, so composite F1
+    reduces to a precision ranking and the recall axis is flat. Here a detector
+    either finds the single anomaly or it does not, and across a set of series
+    the proportion found is a real measurement.
+
+    The archive guarantees an anomaly-free prefix and the selection rule keeps
+    it longer than the warm-up window, so warm-up never sees the anomaly. That
+    is a cleaner setup than either of the other two datasets offers.
+    """
+    from src.data_loader import load_ucr_stream
+
+    stream = load_ucr_stream(series)
+    return Scenario(
+        name=f"ucr-{stream.name}",
+        frame=stream.frame,
+        labels=stream.labels,
+        change_points=[],
+        has_true_anomalies=True,
+        note=(
+            f"UCR {stream.name}, one anomaly of {int(stream.labels.sum())} rows "
+            f"in {stream.n_rows}, {stream.anomaly_rate:.2%} anomalous"
+        ),
+        threshold_quantile=threshold_quantile,
+        threshold_rule=threshold_rule,
+    )
+
+
+def ucr_scenarios(
+    n_series: int = UCR_N_SERIES,
+    max_rows: int = UCR_MAX_ROWS,
+    threshold_quantile: float = 0.98,
+) -> list[Scenario]:
+    """The selected UCR subset, as scenarios."""
+    from src.data_loader import select_ucr_series
+
+    return [
+        ucr_scenario(series, threshold_quantile=threshold_quantile)
+        for series in select_ucr_series(n_series=n_series, max_rows=max_rows)
+    ]
+
+
 # --------------------------------------------------------------------------
 # Comparison
 # --------------------------------------------------------------------------
