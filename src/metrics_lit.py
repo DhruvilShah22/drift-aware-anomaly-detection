@@ -345,6 +345,30 @@ def composite_f(y_true, y_pred) -> ScoreTriple:
     return ScoreTriple(m.precision, m.recall, m.f1)
 
 
+def top_one_hit(y_true, scores) -> float:
+    """The UCR Anomaly Archive's own criterion: does the peak land in the window?
+
+    Wu and Keogh score a series as solved when the single highest anomaly score
+    falls inside the labelled anomaly, and they argue for it precisely because
+    it needs no threshold. Every other convention in this module first turns
+    scores into flags with a cutoff, which makes the cutoff part of what is
+    being measured.
+
+    Returns 1.0 or 0.0 for one series, so the mean over a set of series is the
+    proportion solved. NaN scores, which is what a warm-up region carries, are
+    ignored rather than treated as low.
+    """
+    y_true = _as_int_array(y_true)
+    scores = np.asarray(scores, dtype=float)
+    if y_true.shape != scores.shape:
+        raise ValueError(f"shape mismatch: {y_true.shape} vs {scores.shape}")
+    if not np.isfinite(scores).any() or y_true.sum() == 0:
+        return 0.0
+
+    finite = np.where(np.isfinite(scores), scores, -np.inf)
+    return float(y_true[int(np.argmax(finite))] == 1)
+
+
 def all_metrics(y_true, y_pred, pa_k: float = 0.2) -> dict[str, float]:
     """Every convention at once, flattened for a results row."""
     y_true, y_pred = _check_pair(y_true, y_pred)

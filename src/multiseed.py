@@ -44,7 +44,7 @@ from src.experiment import (
     run_strategy,
 )
 from src.models import DegenerateWarmUp
-from src.metrics_lit import all_metrics
+from src.metrics_lit import all_metrics, top_one_hit
 
 # Ten seeds is the floor we were willing to report. Below six the signed-rank
 # test cannot reach significance at any effect size (see stats.MIN_PAIRS), and
@@ -72,6 +72,7 @@ def _stream_row(
     y_pred: np.ndarray,
     n_adaptations: int,
     seconds: float,
+    scores: np.ndarray | None = None,
 ) -> dict:
     model, policy = STRATEGY_FACTORS.get(strategy_name, ("?", "?"))
     row: dict = {
@@ -92,6 +93,10 @@ def _stream_row(
     # Lift over the trivial baseline, on the two metrics the paper leads with.
     row["point_lift"] = row["point_f1"] - row["flag_everything_f1"]
     row["composite_lift"] = row["composite_f1"] - row["flag_everything_f1"]
+    # The UCR archive's own criterion, which needs no threshold. Recorded for
+    # every stream so the two protocols can be compared on the same runs.
+    if scores is not None:
+        row["top1_hit"] = top_one_hit(y_true, scores)
     return row
 
 
@@ -146,7 +151,7 @@ def labelled_seed_runs(
 
             row = _stream_row(
                 scenario, strategy.name, seed, y_true, y_pred,
-                run.n_adaptations, elapsed,
+                run.n_adaptations, elapsed, scores=run.scores[start:],
             )
             row["fit_failed"] = False
             stream_rows.append(row)
