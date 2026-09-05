@@ -717,6 +717,50 @@ prose generated from `results/*.csv` by `scripts/make_paper_tables.py`. The
 manuscript contains no hand-typed values, so regenerating the experiments
 regenerates the paper.
 
+### 2026-09-05 — UCR Anomaly Archive added as a third dataset
+
+The paper's own limitations section said event recall saturates on SKAB and that
+"a benchmark with short, sparse anomalies is where it would" carry its weight.
+That was a promissory note, so it got tested.
+
+The UCR Anomaly Archive is Wu and Keogh's replacement for the benchmarks they
+argued were creating an illusion of progress: 250 univariate series, one anomaly
+each, behind a guaranteed clean training prefix. Eight distinct signals were
+taken under a rule fixed in advance (see `data_loader.select_ucr_series`).
+
+**What it showed, none of it flattering:**
+
+- Event recall finally varies: 0.25 to 0.50 across strategies, against exactly
+  1.0 for every strategy on SKAB. That part worked as intended.
+- **Adaptation stops mattering.** The best composite score belongs to Isolation
+  Forest with no rebuilding; the best finder is LOF with no rebuilding. Not one
+  of the four adaptive configurations tops either ranking.
+- **Under the archive's own criterion the whole field fails.** Wu and Keogh score
+  a series as solved when the single highest anomaly score lands inside the
+  labelled window, which needs no threshold. Best of ten: 0.12. Mean: 0.06.
+  The two protocols do not agree on a winner, which is this project's own thesis
+  reappearing between our scoring and the dataset author's.
+
+The top-1 criterion was added because scoring UCR with a thresholded F1, when
+its authors designed a threshold-free one precisely to avoid that, would have
+been the exact substitution the paper criticises elsewhere.
+
+**Three bugs found on the way**, all now covered by tests:
+
+- The archive-completeness check compared decimal bytes against a MiB reading
+  and declared a 184 MB download finished at 84%. A zip keeps its central
+  directory at the end, so the file opened as nothing at all. Completeness is
+  now decided by opening the zip; the download resumes with a Range request
+  rather than restarting, and lands in a `.part` file renamed only on success.
+- The subset rule reserved a signal's name as soon as the cheap filters passed,
+  so one over-long recording of a signal discarded every shorter recording of
+  it. The archive's 251 files cover only 42 distinct signals, and the first
+  subset came back with five `MARS` and two `BIDMC` recordings out of twelve.
+- `run_multiseed` had no way to continue. A laptop sleeping mid-run killed a
+  grid after seven of fifteen streams; every one had been checkpointed and there
+  was no way to keep them. `--resume` now skips completed streams and refuses to
+  splice runs that used different seeds or strategies.
+
 ## If picking this up again
 
 Ideas deliberately left undone rather than half-built:

@@ -20,6 +20,16 @@ confounding them, adds three classical detectors as baselines, and scores the
 same runs under four published conventions. The conventions disagree about which
 policy is best, which is the paper's result.
 
+A third dataset was added afterwards: a subset of the **UCR Anomaly Archive**,
+which Wu and Keogh built to replace benchmarks they judged flawed. Every series
+there carries exactly one short anomaly, so event recall stops being a constant
+1.0 and starts measuring something. It is also where the adaptation question
+falls apart. No policy separates from the others, the classical static detectors
+match anything with a rebuild schedule, and under the archive's own
+threshold-free criterion the best of the ten strategies puts its peak score
+inside the labelled window on 12% of series. That result is in the paper
+alongside the ones that worked.
+
 ```bash
 python scripts/run_multiseed.py          # the grid the paper reports
 python scripts/make_paper_tables.py      # paper/tables/*.tex, from results/*.csv
@@ -90,7 +100,8 @@ python scripts/run_threshold_study.py  # ~495s, threshold rule comparison
 The experiments behind the paper, which repeat everything across seeds:
 
 ```bash
-python scripts/run_multiseed.py      # the model x policy grid, 10 seeds
+python scripts/run_multiseed.py      # the model x policy grid, 10 seeds, 3 datasets
+python scripts/run_multiseed.py --resume   # continue an interrupted grid
 python scripts/run_sweep.py --seeds 5  # drift detectors, repeated
 python scripts/run_ablation.py       # warm-up, horizon and cooldown sensitivity
 python scripts/run_throughput.py     # timing, on an otherwise quiet machine
@@ -431,7 +442,7 @@ notebooks/     kaggle_experiment.ipynb
 results/       metrics.csv, sweep.csv, tuning.csv, transfer.csv,
                threshold_study.csv, multiseed*.csv, significance.csv,
                ablation_*.csv, figures/, demo.gif
-tests/         263 tests
+tests/         301 tests
 ```
 
 Three modules were added for the paper and are worth naming separately.
