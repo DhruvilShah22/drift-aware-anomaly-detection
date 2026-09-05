@@ -101,6 +101,36 @@ def build_label_numbers(text: str) -> dict[str, str]:
     return numbers
 
 
+# BibTeX writes the same accent several ways -- \"{o}, {\"o} and {\"{o}} are
+# all o-umlaut -- and a substitution table keyed on one of them leaves the
+# others as literal punctuation. That is how "Sch{\"o}lkopf" reached a rendered
+# PDF as Sch"olkopf. Match the command and its argument instead of the spelling.
+ACCENT_COMMANDS = {
+    '"': {"o": "ö", "a": "ä", "u": "ü", "e": "ë", "i": "ï", "A": "Ä", "O": "Ö", "U": "Ü"},
+    "'": {"e": "é", "a": "á", "i": "í", "o": "ó", "u": "ú", "E": "É", "c": "ć"},
+    "`": {"a": "à", "e": "è", "i": "ì", "o": "ò", "u": "ù"},
+    "~": {"a": "ã", "n": "ñ", "o": "õ"},
+    "^": {"a": "â", "e": "ê", "i": "î", "o": "ô", "u": "û"},
+    "v": {"s": "š", "z": "ž", "c": "č", "Z": "Ž", "S": "Š", "C": "Č"},
+    ".": {"e": "ė", "z": "ż", "a": "ȧ"},
+    "c": {"c": "ç", "s": "ş"},
+    "u": {"a": "ă", "g": "ğ"},
+    "H": {"o": "ő", "u": "ű"},
+}
+
+
+def strip_accents(name: str) -> str:
+    """Turn BibTeX accent markup into the character it stands for."""
+    def replace(match: re.Match) -> str:
+        command, letter = match.group(1), match.group(2)
+        return ACCENT_COMMANDS.get(command, {}).get(letter, letter)
+
+    # \"{o} / \"o / {\"o} / {\"{o}} all reduce to the same pair.
+    pattern = r"\\([\"'`~^vcuH.])\s*\{?([A-Za-z])\}?"
+    cleaned = re.sub(pattern, replace, name)
+    return cleaned.replace("{", "").replace("}", "").replace("\\", "").strip()
+
+
 def build_citations(path: Path) -> dict[str, str]:
     """Author-year strings for each bib key, e.g. "Kim et al. (2022)"."""
     if not path.exists():
@@ -117,9 +147,7 @@ def build_citations(path: Path) -> dict[str, str]:
         surnames = []
         for author in authors:
             name = author.split(",")[0] if "," in author else author.split()[-1]
-            for tex, char in ACCENTS.items():
-                name = name.replace(tex, char)
-            surnames.append(name.replace("{", "").replace("}", "").replace("\\", ""))
+            surnames.append(strip_accents(name))
         if not surnames:
             label = key
         elif len(surnames) == 1:
@@ -158,9 +186,12 @@ def inline(text: str, macros: dict[str, str]) -> str:
         text,
     )
 
-    text = re.sub(r"\\textbf\{([^{}]*)\}", r"<strong>\1</strong>", text)
-    text = re.sub(r"\\emph\{([^{}]*)\}", r"<em>\1</em>", text)
-    text = re.sub(r"\\textit\{([^{}]*)\}", r"<em>\1</em>", text)
+    # One level of nesting throughout, so \emph{\SomeMacro{}} survives: macro
+    # substitution runs later, so at this point the argument still has braces.
+    nested = r"((?:[^{}]|\{[^{}]*\})*)"
+    text = re.sub(r"\\textbf\{" + nested + r"\}", r"<strong>\1</strong>", text)
+    text = re.sub(r"\\emph\{" + nested + r"\}", r"<em>\1</em>", text)
+    text = re.sub(r"\\textit\{" + nested + r"\}", r"<em>\1</em>", text)
     # One level of nesting, so \texttt{... -{}- ...} survives intact.
     text = re.sub(r"\\texttt\{((?:[^{}]|\{[^{}]*\})*)\}", r"<code>\1</code>", text)
     text = re.sub(r"\\footnotesize\s*", "", text)
@@ -214,6 +245,14 @@ def inline(text: str, macros: dict[str, str]) -> str:
     for name in sorted(macros, key=len, reverse=True):
         value = macros[name]
         text = text.replace(f"\\{name}{{}}", value).replace(f"\\{name}", value)
+
+    # `{,}` is how LaTeX keeps a digit separator from being read as punctuation
+    # with its own spacing, and `\ ` is an explicit inter-word space after an
+    # abbreviation. Both are invisible in a PDF and both were reaching the HTML
+    # literally, as "30{,}000" and "vs.\".
+    text = text.replace("{,}", ",").replace("{.}", ".")
+    text = re.sub(r"\\ ", " ", text)
+    text = re.sub(r"\\,|\\;|\\:|\\!", " ", text)
 
     text = text.replace(r"\%", "%").replace(r"\&", "&amp;").replace(r"\_", "_")
     text = text.replace(r"\\", "")
@@ -420,11 +459,10 @@ def render_bibliography() -> str:
             (m.group(1).lower(), m.group(2).strip())
             for m in re.finditer(r"(\w+)\s*=\s*\{(.*?)\}(?:,|\s*$)", match.group(2), flags=re.S)
         )
-        author = fields.get("author", "").replace(" and ", ", ")
-        for tex, char in ACCENTS.items():
-            author = author.replace(tex, char)
-        author = author.replace("{", "").replace("}", "").replace("\\", "")
-        title = fields.get("title", "").replace("{", "").replace("}", "")
+        author = ", ".join(
+            strip_accents(a) for a in fields.get("author", "").split(" and ") if a.strip()
+        )
+        title = strip_accents(fields.get("title", ""))
         venue = fields.get("journal") or fields.get("booktitle") or fields.get("note", "")
         venue = venue.replace("{", "").replace("}", "").replace("--", "&ndash;")
         year = fields.get("year", "")

@@ -107,8 +107,8 @@ This paper reports that finding properly. Our contributions:
   F1 obtained by flagging every single row is itself convention-dependent:
   \NBeatPoint{} of \NStrategies{} clear it point-wise, \NBeatComposite{}
   under the composite score, and \NBeatRange{} under range-based scoring. We
-  report the baseline beside every result instead of choosing the convention
-  that flatters ours.
+  report the baseline beside every result, and did not go looking for the
+  convention that flatters ours.
 \end{enumerate}
 
 \section{Related work}
@@ -134,7 +134,7 @@ splits and is the usual static baseline. Local Outlier Factor
 minimum covariance determinant estimator \citep{rousseeuw1999mcd} are the
 classical alternatives; none supports an incremental update, so for them
 adaptation can only mean a refit. More recent systems adapt by pooling models
-instead of resetting one \citep{yoon2022arcus}. We use the simpler reset
+without resetting one \citep{yoon2022arcus}. We use the simpler reset
 because the object of study here is the policy, not the model.
 
 \paragraph{How these systems are scored.} This is where the field is least
@@ -293,7 +293,7 @@ That construction is what we need. On SKAB every strategy catches every labelled
 event, so event-level recall is 1.0 for all of them and the composite score
 collapses to a ranking on precision alone. With one short anomaly per series a
 detector either finds it or it does not, and over a set of series the proportion
-found is a measurement rather than a constant.
+found is a measurement and not a constant.
 
 Running all 250 series through the grid at \NSeeds{} seeds is not affordable on
 one core, so we take \NUcrSeries{} of them under a rule fixed in advance and
@@ -310,12 +310,12 @@ and \texttt{TkeepFirstMARS} are the same instrument. Our first subset came back
 with five \texttt{MARS} recordings and two \texttt{BIDMC} recordings out of
 twelve, which would have been a study of two signals in costume.
 
-\NUcrSeries{} is where the archive divides rather than a round number we chose.
+\NUcrSeries{} is where the archive divides, not a round number we chose.
 Taking the shortest recording of each distinct signal gives eight between 6{,}700
 and 12{,}000 rows and then nothing until 24{,}667, so a subset of twelve would
 need a 30{,}000-row cap and about two and a half times the runtime for four more
 signals. The selected series average \UcrRows{} rows at a \UcrBaseRate\%
-anomaly rate, which puts the trivial baseline at \UcrFlagAll{} instead of the
+anomaly rate, which puts the trivial baseline at \UcrFlagAll{} against the
 \FlagAll{} it reaches on SKAB.
 
 \subsection{Replication and pairing}
@@ -323,8 +323,8 @@ anomaly rate, which puts the trivial baseline at \UcrFlagAll{} instead of the
 Each run is repeated at \NSeeds{} seeds. A seed drives the model, the drift
 detector where it samples, and the stream itself wherever the stream is
 stochastic. Only the gradual injection draws randomly; the other three shapes
-are deterministic given the base recording, and we record which is which rather
-than implying more replication than exists.
+are deterministic given the base recording, and the output records which is
+which, so it never implies more replication than exists.
 
 Runs are paired. At a given seed every strategy sees the same stream and the
 same warm-up, so a difference at that seed is attributable to the policy.

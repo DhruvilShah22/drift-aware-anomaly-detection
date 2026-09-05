@@ -201,8 +201,8 @@ be the most interesting entry in the table. It is the quickest of the five on
 both the sudden and the recurring shapes, and it raises fewer false alarms than
 ADWIN while doing it. What it gives up is the incremental ramp, where it is the
 slowest detector that fires at all: a cumulative sum needs the deviation to
-accumulate, and a slow ramp supplies it slowly. That is a clean trade rather
-than a defect, and it is the kind of thing a single-detector study cannot see.
+accumulate, and a slow ramp supplies it slowly. That is a clean trade and not a
+defect, and it is the kind of thing a single-detector study cannot see.
 KSWIN is the one detector we would not recommend from these numbers: it is
 slower than ADWIN on every shape and raises the most false alarms of the five.
 
@@ -314,11 +314,10 @@ worst manages \WorstUcrTopOneVal{}, and the average across all ten is
 documents between conventions, now reproduced between our scoring and the
 dataset author's.
 
-\paragraph{Adaptation does not help here.} The strategy with the best composite
-score on this data is \BestUcrComposite{}, whose policy is to
-\emph{\BestUcrPolicy{}}; the one that finds the most anomalies is
-\BestUcrName{}, which is set to \emph{\BestUcrFoundPolicy{}}. Neither is one of
-the \NUcrAdaptive{} adaptive configurations. On the benchmark built to be hard,
+\paragraph{Adaptation does not help here.} The best composite score on this data
+belongs to \BestUcrComposite{}, and the most anomalies are found by
+\BestUcrName{}. Both are configured to \emph{\BestUcrPolicy{}}, and neither is
+one of the \NUcrAdaptive{} adaptive configurations. On the benchmark built to be hard,
 the question this paper is about stops mattering: the policies are separated by
 less than the noise, and the classical static detectors are as good as anything
 with a rebuild schedule. We report that because it is what the data says, and
