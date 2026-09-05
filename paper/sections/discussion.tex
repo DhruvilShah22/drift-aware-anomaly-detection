@@ -70,18 +70,24 @@ changes of unknown magnitude. That is why this stream is used for anomaly
 quality only and never for drift timing, and it is why we also report per
 recording, where the joins are not inside the scored region.
 
-\paragraph{Event recall saturates.} SKAB's faults are long, so on the labelled
-stream every strategy catches every event and event-level recall is 1.0 across
-the board. Composite F1 there reduces to a precision-driven ranking. That is the
-correct operational picture, and it is what point-wise scoring obscured, but the
-recall axis carries no information on this particular stream. A benchmark with
-short, sparse anomalies is where it would.
+\paragraph{Event recall saturates on SKAB.} SKAB's faults are long, so on the
+labelled stream every strategy catches every event and event-level recall is 1.0
+across the board. Composite F1 there reduces to a precision-driven ranking. That
+is the correct operational picture, and it is what point-wise scoring obscured,
+but the recall axis carries no information on that particular stream. This is
+why the UCR subset is in the paper, and Section~\ref{sec:ucr} is where the
+recall axis does some work. The limitation is not removed so much as bounded: it
+applies to SKAB, partly to NAB, and not to UCR.
 
-\paragraph{Two datasets, one of them contested.} \citet{wu2023flawed} argue that
-NAB and benchmarks like it are flawed enough to mislead. We use NAB only to ask
-whether a calibration transfers, which is a weaker use than ranking detectors on
-it, but the criticism still applies to Section~\ref{sec:transfer}. A wider study
-would add datasets designed after that critique.
+\paragraph{Three datasets, one of them contested.} \citet{wu2023flawed} argue
+that NAB and benchmarks like it are flawed enough to mislead. We use NAB only to
+ask whether a calibration transfers, which is a weaker use than ranking
+detectors on it, but the criticism still applies to Section~\ref{sec:transfer}.
+The UCR archive is those authors' own replacement and we use a subset of it, so
+the study is no longer resting on the benchmarks they criticised. It is a
+subset, though: \NUcrSeries{} of 250, chosen by a stated rule and bounded by
+what one core can run. A study with the compute to take all 250 would be a
+stronger test than ours.
 
 \paragraph{No deep or model-pooling baselines.} The comparison covers one online
 model, one static ensemble and three classical detectors. It does not include the
@@ -136,3 +142,11 @@ general one is that a paper reporting a single scoring convention has not
 established which policy is better, only which policy that convention prefers.
 On the stream studied here, \MoverName{} moves from \MoverPointRank{} to
 \MoverCompositeRank{} of \NStrategies{} on identical predictions.
+
+The third dataset put a limit on all of it. On the UCR subset no policy
+separates from the others, the classical static detectors match anything with a
+rebuild schedule, and under the archive's own criterion the field as a whole
+puts its peak score inside the labelled window on \MeanUcrTopOne{} of series.
+The comparison this paper is built around is worth making on SKAB and is close
+to meaningless on the benchmark built to be hard. We would rather finish on that
+than on the part that worked.

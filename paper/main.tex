@@ -51,11 +51,15 @@ identical predictions. We report the comparison over \NSeeds{} seeds and the
 \NRecordings{} source recordings that carry a fault, with paired
 tests and Holm correction, and we cross the two factors that the usual
 presentation confounds: the anomaly model and the adaptation policy. The
-practical finding is that the adaptation question has no convention-independent
-answer on this data: every one of the \NStrategies{} strategies changes rank
-between point-wise and composite scoring, and the largest single move is
-\MaxRankJump{} places. Code, logs and every table in this paper regenerate
-from one command.
+adaptation question has no convention-independent answer on this data: every one
+of the \NStrategies{} strategies changes rank between point-wise and composite
+scoring, and the largest single move is \MaxRankJump{} places. On a third
+dataset, the UCR Anomaly Archive built expressly to replace benchmarks its
+authors judged flawed, the question stops mattering at all: no policy separates
+from the others, and under the archive's own threshold-free criterion the best
+of the ten puts its peak score inside the labelled window on
+\BestUcrTopOneVal{} of series. Code, logs and every table in this paper
+regenerate from one command.
 \end{abstract}
 
 \section{Introduction}
@@ -216,11 +220,11 @@ adaptation points in \texttt{tests/test\_batched\_equivalence.py}.
 \subsection{Thresholds}
 
 The alarm threshold is a quantile of the warm-up score distribution. It encodes
-how often anomalies are expected, and the two dataset families here differ by
-more than an order of magnitude in base rate, so a single value across both
-would not be a fair comparison but a badly calibrated detector on one of them.
-We use $q=0.50$ on the labelled SKAB stream, which is \BaseRate\% anomalous, and
-$q=0.98$ on the injected and NAB streams. Section~\ref{sec:transfer} measures
+how often anomalies are expected, and the dataset families here differ by more
+than an order of magnitude in base rate, so a single value across all of them
+would not be a fair comparison but a badly calibrated detector on most. We use
+$q=0.50$ on the labelled SKAB stream, which is \BaseRate\% anomalous, and
+$q=0.98$ on the injected, NAB and UCR streams. Section~\ref{sec:transfer} measures
 what carrying one setting to a new dataset costs.
 
 \section{Evaluation conventions}
@@ -277,6 +281,42 @@ flag raised is by definition a false alarm.
 calibration transfers. It differs from SKAB in the ways that would break one: it
 is univariate where SKAB has eight sensors, and roughly 10\% anomalous where
 SKAB is \BaseRate\%. We use \NNabSeries{} series long enough to warm up on.
+
+\textbf{The UCR Anomaly Archive} \citep{wu2023flawed} is the third, and it is
+here because of the same authors' criticism of the second. Wu and Keogh argued
+that NAB and benchmarks like it are flawed enough to create an illusion of
+progress, and built the archive as a replacement: 250 univariate series, each
+carrying exactly one anomaly, each with a training prefix guaranteed to be
+clean.
+
+That construction is what we need. On SKAB every strategy catches every labelled
+event, so event-level recall is 1.0 for all of them and the composite score
+collapses to a ranking on precision alone. With one short anomaly per series a
+detector either finds it or it does not, and over a set of series the proportion
+found is a measurement rather than a constant.
+
+Running all 250 series through the grid at \NSeeds{} seeds is not affordable on
+one core, so we take \NUcrSeries{} of them under a rule fixed in advance and
+stated in full in \texttt{data\_loader.select\_ucr\_series}: the series must fit
+in 12{,}000 rows, its clean prefix must exceed the warm-up window so warm-up
+never sees the anomaly, its anomaly must be under a tenth of the series, and at
+most one series is taken per base signal. The remaining candidates are taken in
+archive-index order. Nothing in the rule depends on a result.
+
+That last condition does more work than it sounds like. The archive's 251 files
+cover only 42 distinct source signals, and its file names hide the duplication
+behind corruption prefixes and ordinals, so \texttt{DISTORTEDTkeepFifthMARS}
+and \texttt{TkeepFirstMARS} are the same instrument. Our first subset came back
+with five \texttt{MARS} recordings and two \texttt{BIDMC} recordings out of
+twelve, which would have been a study of two signals in costume.
+
+\NUcrSeries{} is where the archive divides rather than a round number we chose.
+Taking the shortest recording of each distinct signal gives eight between 6{,}700
+and 12{,}000 rows and then nothing until 24{,}667, so a subset of twelve would
+need a 30{,}000-row cap and about two and a half times the runtime for four more
+signals. The selected series average \UcrRows{} rows at a \UcrBaseRate\%
+anomaly rate, which puts the trivial baseline at \UcrFlagAll{} instead of the
+\FlagAll{} it reaches on SKAB.
 
 \subsection{Replication and pairing}
 

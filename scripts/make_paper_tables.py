@@ -176,7 +176,7 @@ def table_significance(significance: pd.DataFrame) -> None:
 
 def table_transfer(summary: pd.DataFrame, rows: pd.DataFrame) -> None:
     """NAB, SKAB threshold carried over unchanged, best strategy per series."""
-    nab = summary[~summary.stream.str.startswith("skab")]
+    nab = summary[~summary.stream.str.startswith(("skab", "ucr-"))]
     if nab.empty:
         return
     baselines = rows.groupby("stream").flag_everything_f1.first()
@@ -241,6 +241,67 @@ def table_detectors(sweep_summary: pd.DataFrame) -> None:
     write("detectors.tex", "\n".join(lines) + "\n")
 
 
+def table_ucr(rows: pd.DataFrame) -> pd.DataFrame | None:
+    """The UCR subset, where event recall finally discriminates.
+
+    Every series carries exactly one anomaly, so `composite_recall` is 0 or 1
+    per run and its mean over series and seeds is the proportion of anomalies a
+    strategy actually found. On SKAB and NAB that number is 1.0 for everything,
+    which is why the composite score collapses to a precision ranking there.
+    """
+    ucr = rows[rows.stream.str.startswith("ucr-")]
+    if ucr.empty:
+        return None
+
+    aggregations = dict(
+        found=("composite_recall", "mean"),
+        composite=("composite_f1", "mean"),
+        point=("point_f1", "mean"),
+        alarm=("alarm_rate", "mean"),
+        baseline=("flag_everything_f1", "mean"),
+    )
+    has_top1 = "top1_hit" in ucr.columns and ucr.top1_hit.notna().any()
+    if has_top1:
+        aggregations["top1"] = ("top1_hit", "mean")
+    grouped = ucr.groupby("strategy").agg(**aggregations)
+    grouped = grouped.reindex([s for s in STRATEGY_ORDER if s in grouped.index])
+
+    columns = "lcccc" + ("c" if has_top1 else "")
+    header = r"Model, policy & "
+    if has_top1:
+        header += r"Peak in window & "
+    header += r"Anomalies found & Composite F1 & Point-wise F1 & Alarm rate \\"
+
+    lines = [
+        r"\begin{tabular}{" + columns + "}",
+        r"\toprule",
+        header,
+        r"\midrule",
+    ]
+    for name, row in grouped.iterrows():
+        cells = [PRETTY.get(name, name)]
+        if has_top1:
+            cells.append(f"{row.top1:.2f}")
+        cells += [f"{row.found:.2f}", f"{row.composite:.3f}",
+                  f"{row.point:.3f}", f"{row.alarm:.3f}"]
+        lines.append(" & ".join(cells) + r" \\")
+    trivial_cells = ["Flag everything"]
+    if has_top1:
+        # Flagging every row assigns one score to everything, so there is no
+        # peak to land anywhere. The criterion simply does not apply to it.
+        trivial_cells.append("--")
+    trivial_cells += ["1.00", f"{grouped.baseline.iloc[0]:.3f}",
+                      f"{grouped.baseline.iloc[0]:.3f}", "1.000"]
+    lines += [
+        r"\midrule",
+        " & ".join(trivial_cells) + r" \\",
+        r"\bottomrule",
+        r"\end{tabular}",
+    ]
+    write("ucr.tex", "\n".join(lines) + "\n")
+    return grouped
+
+
 def table_cost(summary: pd.DataFrame, throughput: pd.DataFrame | None) -> None:
     """Throughput, because a streaming method that cannot keep up is not one.
 
@@ -288,7 +349,7 @@ def ordinal(n: int) -> str:
 
 
 def table_numbers(summary, rows, significance, segments, speed=None,
-                  speed_source="grid", trivial=None) -> dict:
+                  speed_source="grid", trivial=None, ucr=None) -> dict:
     """Emit every number the prose quotes as a LaTeX macro.
 
     The manuscript writes \\FlagAll rather than 0.512, so a sentence cannot end
@@ -383,7 +444,72 @@ def table_numbers(summary, rows, significance, segments, speed=None,
         put("NSeedComparisons", int(len(seed_block)))
         put("NSeedSignificant", int(seed_block.significant_holm.sum()))
 
-    nab = summary[~summary.stream.str.startswith("skab")]
+    if ucr is not None and not ucr.empty:
+        ucr_rows = rows[rows.stream.str.startswith("ucr-")]
+        put("NUcrSeries", int(ucr_rows.stream.nunique()))
+        put("UcrRows", f"{int(ucr_rows.n_steps.mean()):,}")
+        put("UcrBaseRate", f"{100 * ucr_rows.base_rate.mean():.2f}")
+        put("UcrFlagAll", f"{ucr_rows.flag_everything_f1.mean():.3f}")
+
+        found = ucr["found"].sort_values(ascending=False)
+        put("BestUcrName", PRETTY.get(found.index[0], found.index[0]))
+        put("BestUcrFound", f"{found.iloc[0]:.2f}")
+        put("WorstUcrName", PRETTY.get(found.index[-1], found.index[-1]))
+        put("WorstUcrFound", f"{found.iloc[-1]:.2f}")
+        put("UcrRecallSpread", f"{found.iloc[0] - found.iloc[-1]:.2f}")
+
+        best_composite = ucr["composite"].idxmax()
+        put("BestUcrComposite", PRETTY.get(best_composite, best_composite))
+        policy_words = {"never": "never rebuild", "online": "learn continuously",
+                        "periodic": "rebuild on a schedule", "drift": "rebuild on drift"}
+        best_policy = rows[rows.strategy == best_composite].policy.iloc[0]
+        put("BestUcrPolicy", policy_words.get(best_policy, best_policy))
+        found_policy = rows[rows.strategy == found.index[0]].policy.iloc[0]
+        put("BestUcrFoundPolicy", policy_words.get(found_policy, found_policy))
+        adaptive = ucr.index[ucr.index.str.contains("periodic|drift")]
+        put("NUcrAdaptive", int(len(adaptive)))
+        put(
+            "NUcrAdaptiveAboveBest",
+            int((ucr.loc[adaptive, "composite"] > ucr["composite"].max() - 1e-12).sum()),
+        )
+        policy_words = {"never": "never rebuild", "online": "learn continuously",
+                        "periodic": "rebuild on a schedule", "drift": "rebuild on drift"}
+        best_policy = rows[rows.strategy == best_composite].policy.iloc[0]
+        put("BestUcrPolicy", policy_words.get(best_policy, best_policy))
+        found_policy = rows[rows.strategy == found.index[0]].policy.iloc[0]
+        put("BestUcrFoundPolicy", policy_words.get(found_policy, found_policy))
+        adaptive = ucr.index[ucr.index.str.contains("periodic|drift")]
+        put("NUcrAdaptive", int(len(adaptive)))
+        put(
+            "NUcrAdaptiveAboveBest",
+            int((ucr.loc[adaptive, "composite"] > ucr["composite"].max() - 1e-12).sum()),
+        )
+        put("BestUcrCompositeVal", f"{ucr['composite'].max():.3f}")
+        best_point = ucr["point"].idxmax()
+        put("BestUcrPoint", PRETTY.get(best_point, best_point))
+
+        if "top1" in ucr.columns:
+            top1 = ucr["top1"].sort_values(ascending=False)
+            put("BestUcrTopOne", PRETTY.get(top1.index[0], top1.index[0]))
+            put("BestUcrTopOneVal", f"{top1.iloc[0]:.2f}")
+            put("WorstUcrTopOneVal", f"{top1.iloc[-1]:.2f}")
+            put("MeanUcrTopOne", f"{ucr['top1'].mean():.2f}")
+            # Do the two protocols agree on who is best?
+            put(
+                "TopOneAgreesWithComposite",
+                "yes" if top1.index[0] == ucr["composite"].idxmax() else "no",
+            )
+        put("NUcrBeatComposite", int((ucr["composite"] > ucr["baseline"]).sum()))
+        put("NUcrBeatPoint", int((ucr["point"] > ucr["baseline"]).sum()))
+
+        # Does the recall axis actually carry information here, unlike the other
+        # two datasets? This is the number that answers it.
+        for prefix, frame in (("Skab", rows[rows.stream.str.startswith("skab")]),
+                              ("Nab", rows[rows.stream.str.startswith(("machine", "cpu", "nyc", "ambient", "rogue", "ec2"))])):
+            if not frame.empty:
+                put(f"{prefix}EventRecallMin", f"{frame.composite_recall.min():.2f}")
+
+    nab = summary[~summary.stream.str.startswith(("skab", "ucr-"))]
     if not nab.empty:
         baselines = rows.groupby("stream").flag_everything_f1.first()
         best = (
@@ -466,13 +592,15 @@ def main() -> int:
     throughput = load("throughput.csv")
 
     _, _, trivial = table_main(summary, rows)
+    ucr = table_ucr(rows)
     speed, speed_source = table_cost(summary, throughput)
     table_transfer(summary, rows)
     if significance is not None:
         table_significance(significance)
     if sweep_summary is not None:
         table_detectors(sweep_summary)
-    table_numbers(summary, rows, significance, segments, speed, speed_source, trivial)
+    table_numbers(summary, rows, significance, segments, speed, speed_source,
+                  trivial, ucr)
 
     digest(summary, rows, significance, segments)
     return 0

@@ -403,6 +403,58 @@ def figure_detector_delay(summary: pd.DataFrame) -> None:
     save(fig, "detector_delay")
 
 
+def figure_ucr(rows: pd.DataFrame) -> None:
+    """Where the recall axis finally does some work.
+
+    One anomaly per series means a strategy either finds it or does not, so the
+    height of each bar is the proportion of anomalies found. The other two
+    datasets put every bar at 1.0.
+    """
+    ucr = rows[rows.stream.str.startswith("ucr-")]
+    if ucr.empty:
+        return
+
+    n_series = ucr.stream.nunique()
+    grouped = ucr.groupby("strategy").agg(
+        found=("composite_recall", "mean"),
+        composite=("composite_f1", "mean"),
+        precision=("composite_precision", "mean"),
+    )
+    strategies = [s for s in STRATEGY_ORDER if s in grouped.index]
+    grouped = grouped.loc[strategies]
+
+    x = np.arange(len(strategies))
+    fig, (left, right) = plt.subplots(1, 2, figsize=(10.5, 3.6))
+
+    left.bar(x, grouped["found"], 0.62, color=ORANGE, edgecolor="white", linewidth=0.6)
+    for i, value in enumerate(grouped["found"]):
+        left.text(i, value + 0.02, f"{value:.2f}", ha="center", fontsize=7.5, color=INK)
+    left.set_xticks(x)
+    left.set_xticklabels(strategies, rotation=35, ha="right")
+    left.set_ylabel("proportion of anomalies found")
+    left.set_ylim(0, 1.1)
+    left.yaxis.grid(True)
+    left.set_axisbelow(True)
+    left.set_title(f"Event recall over {n_series} UCR series", loc="left", fontsize=9)
+
+    right.scatter(
+        grouped["found"], grouped["precision"],
+        s=46, color=BLUE, edgecolor="white", linewidth=0.8, zorder=3,
+    )
+    for name, row in grouped.iterrows():
+        right.annotate(
+            name, (row["found"], row["precision"]), xytext=(5, 3),
+            textcoords="offset points", fontsize=7, color=MUTED,
+        )
+    right.set_xlabel("proportion of anomalies found")
+    right.set_ylabel("point-wise precision")
+    right.grid(True)
+    right.set_axisbelow(True)
+    right.set_title("Recall against precision", loc="left", fontsize=9)
+
+    save(fig, "ucr")
+
+
 def figure_ablation(warmup: pd.DataFrame, horizon: pd.DataFrame) -> None:
     """Do the conclusions move when the hand-picked constants move?"""
     if warmup is None and horizon is None:
@@ -456,7 +508,7 @@ def figure_ablation(warmup: pd.DataFrame, horizon: pd.DataFrame) -> None:
 
 def figure_transfer(summary: pd.DataFrame) -> None:
     """Whether the SKAB setting carries to NAB, per series and per metric."""
-    nab = summary[~summary.stream.str.startswith("skab")]
+    nab = summary[~summary.stream.str.startswith(("skab", "ucr-"))]
     if nab.empty:
         return
 
@@ -535,6 +587,7 @@ def main() -> int:
         figure_rank_flip(summary)
         figure_factorial(rows)
         figure_transfer(summary)
+        figure_ucr(rows)
 
     if segments is not None:
         figure_segment_spread(segments)

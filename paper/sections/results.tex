@@ -252,6 +252,79 @@ different strategies take the top place across the \NNabSeries{} series, and
 one of them is a classical static baseline. There is no ranking here to
 transfer, only a method and a threshold that has to be set per deployment.
 
+\subsection{Where event recall discriminates}
+\label{sec:ucr}
+
+Everything above is scored on data where the recall axis is nearly flat. On SKAB
+every strategy catches every labelled event, so composite F1 is a ranking on
+precision and nothing else. The UCR subset is here to supply the missing axis:
+one anomaly per series, \NUcrSeries{} series, so a strategy either finds each
+one or it does not.
+
+\begin{table}[t]
+\centering
+\input{tables/ucr}
+\caption{The UCR subset, averaged over \NUcrSeries{} series and \NSeeds{} seeds.
+``Anomalies found'' is the proportion of series whose single anomaly the
+strategy flagged at all, which is event-level recall when every series has
+exactly one event. The trivial baseline finds every anomaly by definition and
+pays for it in precision.}
+\label{tab:ucr}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{../results/figures/paper/ucr.pdf}
+\caption{Left: the proportion of UCR anomalies each strategy found. Right: the
+same quantity against point-wise precision, which is the trade the composite
+score combines.}
+\label{fig:ucr}
+\end{figure}
+
+The proportion of anomalies found (Figure~\ref{fig:ucr}) runs from
+\WorstUcrFound{} for \WorstUcrName{} to \BestUcrFound{} for \BestUcrName{}, a
+spread of \UcrRecallSpread{}. That spread is the first thing to note. It is a real
+difference between strategies that SKAB cannot show at all and NAB shows only
+partially, and it exists because the benchmark was built so a detector can miss.
+
+The second thing to note is the level. The best strategy here finds
+\BestUcrFound{} of the anomalies. Not one of the ten finds most of them, and
+that is on a subset chosen for being short and tractable. Whatever these
+policies are doing on SKAB, they are not solving this.
+
+The base rate is \UcrBaseRate\%, which puts the trivial baseline at
+\UcrFlagAll{} rather than the \FlagAll{} it reaches on SKAB. That is a much
+lower bar and it is the bar a detector should face: where anomalies are genuinely
+rare, flagging everything is obviously useless, and a benchmark on which it looks
+competitive is the problem \citet{wu2023flawed} were describing.
+\NUcrBeatComposite{} of \NStrategies{} strategies clear it under the composite
+score and \NUcrBeatPoint{} point-wise, but the margins are small enough that
+clearing it is not much of a claim.
+
+\paragraph{The archive's own criterion.} Scoring UCR with a thresholded F1 is
+not what its authors intended. They score a series as solved when the single
+highest anomaly score falls inside the labelled window, and they argue for that
+because it needs no threshold, so the cutoff stops being part of what is
+measured. Substituting our own convention for theirs would be the exact move
+this paper criticises, so Table~\ref{tab:ucr} reports both. Under the archive's
+criterion the best strategy is \BestUcrTopOne{} at \BestUcrTopOneVal{}, the
+worst manages \WorstUcrTopOneVal{}, and the average across all ten is
+\MeanUcrTopOne{}. The two protocols do not even agree on a winner
+(\TopOneAgreesWithComposite{}), which is the same disagreement this paper
+documents between conventions, now reproduced between our scoring and the
+dataset author's.
+
+\paragraph{Adaptation does not help here.} The strategy with the best composite
+score on this data is \BestUcrComposite{}, whose policy is to
+\emph{\BestUcrPolicy{}}; the one that finds the most anomalies is
+\BestUcrName{}, which is set to \emph{\BestUcrFoundPolicy{}}. Neither is one of
+the \NUcrAdaptive{} adaptive configurations. On the benchmark built to be hard,
+the question this paper is about stops mattering: the policies are separated by
+less than the noise, and the classical static detectors are as good as anything
+with a rebuild schedule. We report that because it is what the data says, and
+because a paper that found adaptation mattered on two datasets and quietly left
+out the third would be doing what its own introduction complains about.
+
 \subsection{Sensitivity to the constants we chose}
 \label{sec:ablation}
 

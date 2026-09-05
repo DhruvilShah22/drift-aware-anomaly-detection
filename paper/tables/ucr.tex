@@ -1,0 +1,18 @@
+\begin{tabular}{lccccc}
+\toprule
+Model, policy & Peak in window & Anomalies found & Composite F1 & Point-wise F1 & Alarm rate \\
+\midrule
+HST, never & 0.07 & 0.30 & 0.030 & 0.014 & 0.022 \\
+HST, online & 0.06 & 0.42 & 0.023 & 0.013 & 0.032 \\
+HST, periodic & 0.01 & 0.33 & 0.022 & 0.012 & 0.021 \\
+HST, drift & 0.06 & 0.35 & 0.026 & 0.014 & 0.021 \\
+iForest, never & 0.00 & 0.33 & 0.033 & 0.014 & 0.030 \\
+iForest, periodic & 0.00 & 0.35 & 0.016 & 0.010 & 0.033 \\
+iForest, drift & 0.01 & 0.26 & 0.019 & 0.011 & 0.029 \\
+LOF, never & 0.12 & 0.50 & 0.030 & 0.021 & 0.046 \\
+OC-SVM, never & 0.12 & 0.25 & 0.028 & 0.013 & 0.034 \\
+MCD, never & 0.12 & 0.38 & 0.030 & 0.017 & 0.026 \\
+\midrule
+Flag everything & -- & 1.00 & 0.020 & 0.020 & 1.000 \\
+\bottomrule
+\end{tabular}
