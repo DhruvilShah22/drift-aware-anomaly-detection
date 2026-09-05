@@ -14,7 +14,7 @@ happens, alarms while the model is stale, then settles once it rebuilds.*
 
 The study this repository supports is written up in [`paper/`](paper/):
 *Scoring conventions reorder adaptation policies in streaming anomaly
-detection*. It repeats the whole comparison over 10 seeds and the 16 source
+detection*, deposited on Zenodo as [10.5281/zenodo.22333127](https://doi.org/10.5281/zenodo.22333127). It repeats the whole comparison over 10 seeds and the 16 source
 recordings, crosses the adaptation policy with the anomaly model instead of
 confounding them, adds three classical detectors as baselines, and scores the
 same runs under four published conventions. The conventions disagree about which
@@ -458,3 +458,19 @@ from committed data with `python scripts/export_demo_gif.py` — no browser need
 
 Development log, including the design mistakes found by running the code, is in
 [PROGRESS.md](PROGRESS.md).
+
+## Citing this
+
+Shah, D. (2026). *Scoring conventions reorder adaptation policies in streaming
+anomaly detection*. Zenodo. https://doi.org/10.5281/zenodo.22333127
+
+```bibtex
+@misc{shah2026scoring,
+  author       = {Shah, Dhruvil},
+  title        = {Scoring conventions reorder adaptation policies in streaming anomaly detection},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.22333127},
+  url          = {https://doi.org/10.5281/zenodo.22333127}
+}
+```

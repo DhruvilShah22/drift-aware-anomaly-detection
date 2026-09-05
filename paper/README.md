@@ -3,6 +3,11 @@
 Source for *Scoring conventions reorder adaptation policies in streaming anomaly
 detection*.
 
+Published on Zenodo: [10.5281/zenodo.22333127](https://doi.org/10.5281/zenodo.22333127) (https://zenodo.org/records/22333127).
+
+The deposited PDF is the committed one. Zenodo files are immutable once
+published, so any correction means a new version there, not an edit.
+
 ## What is here
 
 | File | What it is |
