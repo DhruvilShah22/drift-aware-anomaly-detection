@@ -40,26 +40,24 @@
 \maketitle
 
 \begin{abstract}
-A streaming anomaly detector whose input distribution moves has to decide when
-to rebuild itself. We compare four answers to that question, holding everything
-else fixed: never rebuild, learn continuously, rebuild on a schedule, and
-rebuild when a drift detector fires. Running the comparison under four published
-scoring conventions on the same runs gives \NDistinctWinners{} different
-winners. \MoverName{} places \MoverPointRank{} of \NStrategies{} under
-point-wise F1 and \MoverCompositeRank{} under the composite F-score, on
-identical predictions. We report the comparison over \NSeeds{} seeds and the
-\NRecordings{} source recordings that carry a fault, with paired
-tests and Holm correction, and we cross the two factors that the usual
-presentation confounds: the anomaly model and the adaptation policy. The
-adaptation question has no convention-independent answer on this data: every one
-of the \NStrategies{} strategies changes rank between point-wise and composite
-scoring, and the largest single move is \MaxRankJump{} places. On a third
-dataset, the UCR Anomaly Archive built expressly to replace benchmarks its
-authors judged flawed, the question stops mattering at all: no policy separates
-from the others, and under the archive's own threshold-free criterion the best
-of the ten puts its peak score inside the labelled window on
-\BestUcrTopOneVal{} of series. Code, logs and every table in this paper
-regenerate from one command.
+A streaming anomaly detector has to decide when to rebuild itself once its input
+starts to drift. We compare four ways of handling that, keeping everything else the
+same: never rebuild, keep learning all the time, rebuild on a schedule, or rebuild
+when a drift detector goes off. We scored the same runs under four published
+conventions and got \NDistinctWinners{} different winners. Same predictions, too.
+\MoverName{} comes \MoverPointRank{} of \NStrategies{} under point-wise F1 and
+\MoverCompositeRank{} under the composite F-score. The comparison covers \NSeeds{}
+seeds and the \NRecordings{} source recordings that have a fault in them, with paired
+tests and Holm correction. We also pull apart two things that usually get lumped
+together: the anomaly model and the adaptation policy. On this data, the best policy
+is whichever one your scoring happens to favour. Every one of the \NStrategies{}
+strategies changes rank between point-wise and composite scoring, and the biggest
+jump is \MaxRankJump{} places. Then there's a third dataset, the UCR Anomaly Archive,
+which was built to replace benchmarks its authors thought were flawed. There, none of
+this matters much. No policy stands out from the rest, and by the archive's own
+threshold-free test the best of the ten puts its peak score inside the labelled window
+on \BestUcrTopOneVal{} of series. Code, logs and every table here come back from a
+single command.
 \end{abstract}
 
 \section{Introduction}
