@@ -31,10 +31,12 @@
 
 \author{%
   Dhruvil Amit Shah\\
-  \texttt{contactshahdhruvil@gmail.com}
+  {\normalsize Independent Researcher \textperiodcentered{} contactshahdhruvil@gmail.com \textperiodcentered{} ORCID 0009-0008-2988-5216}
 }
 
-\date{September 2026\\ License: Creative Commons Attribution 4.0 International (CC BY 4.0)}
+\date{Preprint \textperiodcentered{} September 2026, revised November 2026\\[2pt]
+\small Code and data: \url{https://github.com/DhruvilShah22/drift-aware-anomaly-detection} \textperiodcentered{} License: CC BY 4.0\\
+Cite as: D. A. Shah, ``Scoring conventions reorder adaptation policies in streaming anomaly detection,'' Zenodo, 2026, doi:10.5281/zenodo.22333125.}
 
 \begin{document}
 \maketitle
@@ -210,11 +212,9 @@ is the mean absolute $z$-score of the sensors, standardised against the window
 the model was last built on, so it answers ``has the world moved since this
 model was built''. The reference is refit on every rebuild.
 
-Because the adaptation schedule depends only on this input statistic and never
-on the model's scores, the schedule can be computed in one cheap pass and the
-expensive scoring done afterwards in blocks. Our implementation does this, and
-the two paths are asserted to produce identical flags, scores, thresholds and
-adaptation points in \texttt{tests/test\_batched\_equivalence.py}.
+Because the schedule depends only on this input statistic, it is computed in one
+cheap pass and the scoring is done afterwards in blocks; a test asserts that this
+gives the same flags, scores and adaptation points as the plain loop.
 
 \subsection{Thresholds}
 
@@ -281,62 +281,39 @@ calibration transfers. It differs from SKAB in the ways that would break one: it
 is univariate where SKAB has eight sensors, and roughly 10\% anomalous where
 SKAB is \BaseRate\%. We use \NNabSeries{} series long enough to warm up on.
 
-\textbf{The UCR Anomaly Archive} \citep{wu2023flawed} is the third, and it is
-here because of the same authors' criticism of the second. Wu and Keogh argued
-that NAB and benchmarks like it are flawed enough to create an illusion of
-progress, and built the archive as a replacement: 250 univariate series, each
-carrying exactly one anomaly, each with a training prefix guaranteed to be
-clean.
+\textbf{The UCR Anomaly Archive} \citep{wu2023flawed} is the third. Its authors
+argued that NAB and benchmarks like it are flawed enough to create an illusion of
+progress, and built the archive as a replacement: 250 univariate series, each with
+exactly one anomaly and a clean training prefix. That is what SKAB lacks. On SKAB
+every strategy catches every labelled event, so event-level recall is 1.0 for all
+of them; with one short anomaly per series, the proportion found becomes a
+measurement and not a constant.
 
-That construction is what we need. On SKAB every strategy catches every labelled
-event, so event-level recall is 1.0 for all of them and the composite score
-collapses to a ranking on precision alone. With one short anomaly per series a
-detector either finds it or it does not, and over a set of series the proportion
-found is a measurement and not a constant.
-
-Running all 250 series through the grid at \NSeeds{} seeds is not affordable on
-one core, so we take \NUcrSeries{} of them under a rule fixed in advance and
-stated in full in \texttt{data\_loader.select\_ucr\_series}: the series must fit
-in 12{,}000 rows, its clean prefix must exceed the warm-up window so warm-up
-never sees the anomaly, its anomaly must be under a tenth of the series, and at
-most one series is taken per base signal. The remaining candidates are taken in
-archive-index order. Nothing in the rule depends on a result.
-
-That last condition does more work than it sounds like. The archive's 251 files
-cover only 42 distinct source signals, and its file names hide the duplication
-behind corruption prefixes and ordinals, so \texttt{DISTORTEDTkeepFifthMARS}
-and \texttt{TkeepFirstMARS} are the same instrument. Our first subset came back
-with five \texttt{MARS} recordings and two \texttt{BIDMC} recordings out of
-twelve, which would have been a study of two signals in costume.
-
-\NUcrSeries{} is where the archive divides, not a round number we chose.
-Taking the shortest recording of each distinct signal gives eight between 6{,}700
-and 12{,}000 rows and then nothing until 24{,}667, so a subset of twelve would
-need a 30{,}000-row cap and about two and a half times the runtime for four more
-signals. The selected series average \UcrRows{} rows at a \UcrBaseRate\%
-anomaly rate, which puts the trivial baseline at \UcrFlagAll{} against the
-\FlagAll{} it reaches on SKAB.
+The full archive at \NSeeds{} seeds is too much for one core, so we take
+\NUcrSeries{} series under a rule fixed in advance
+(\texttt{data\_loader.select\_ucr\_series}): at most 12{,}000 rows, a clean
+prefix longer than the warm-up window, an anomaly under a tenth of the series,
+and at most one series per source signal, in archive-index order. The last
+condition matters because the archive's 251 files cover only 42 source signals
+under varied names; without it, our first subset was mostly two signals.
+\NUcrSeries{} is also where the archive divides: the next-shortest distinct
+signal is 24{,}667 rows long. The selected series average \UcrRows{} rows at a
+\UcrBaseRate\% anomaly rate, which puts the trivial baseline at \UcrFlagAll{}
+against \FlagAll{} on SKAB.
 
 \subsection{Replication and pairing}
 
 Each run is repeated at \NSeeds{} seeds. A seed drives the model, the drift
-detector where it samples, and the stream itself wherever the stream is
-stochastic. Only the gradual injection draws randomly; the other three shapes
-are deterministic given the base recording, and the output records which is
-which, so it never implies more replication than exists.
+detector where it samples, and the gradual injection, the only stream that draws
+randomly. Runs are paired: at a given seed every strategy sees the same stream
+and the same warm-up, which matters because the between-seed spread is larger
+than the gap between policies.
 
-Runs are paired. At a given seed every strategy sees the same stream and the
-same warm-up, so a difference at that seed is attributable to the policy.
-Pairing matters here because the between-seed spread is larger than the gap
-between policies, and an unpaired test would be underpowered to the point of
-being misleading.
-
-There is a second unit of replication that we think is the more informative one.
-The labelled stream is 16 separate recordings concatenated, and every strategy
-is scored on each of the \NRecordings{} that contain a fault. Seeds ask whether a gap survives the
-randomness; recordings ask whether it survives the data. We report both, because
-a policy that is stable across seeds and unstable across recordings has not been
-shown to work.
+The second unit of replication is the more informative one. Every strategy is
+also scored on each of the \NRecordings{} source recordings that contain a
+fault. Seeds ask whether a gap survives the randomness; recordings ask whether
+it survives the data. A policy that is stable across seeds and unstable across
+recordings has not been shown to work.
 
 \subsection{Statistics}
 
@@ -354,11 +331,9 @@ are flagged as underpowered and never counted as significant, because a
 non-significant verdict there is a property of $n$ and not of the data
 \citep{demsar2006statistical}.
 
-\subsection{Implementation}
-
 The models come from \texttt{river} \citep{montiel2021river} and
-\texttt{scikit-learn} \citep{pedregosa2011sklearn}. The full grid runs on one
-laptop core. Section~\ref{sec:cost} reports throughput.
+\texttt{scikit-learn} \citep{pedregosa2011sklearn}, and the full grid runs on one
+laptop core in under an hour.
 
 %% ------------------------------------------------------------------
 %% RESULTS

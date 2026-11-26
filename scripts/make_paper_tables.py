@@ -143,34 +143,39 @@ def table_main(summary: pd.DataFrame, rows: pd.DataFrame) -> None:
 
 
 def table_significance(significance: pd.DataFrame) -> None:
-    """Paired comparisons on the labelled stream, over seeds and recordings."""
+    """Composite-score paired comparisons on the labelled stream.
+
+    One row per comparison, with the seed and recording units side by side.
+    The point-wise and range-based comparisons are in results/significance.csv
+    and counted in the totals the text quotes; printing all of them made the
+    table a page long without adding a finding.
+    """
     skab = significance[significance.stream.str.startswith("skab")]
     if skab.empty:
         return
+    block = skab[skab.metric == "composite_f1"]
+
+    def cell(row) -> str:
+        verdict = r"\yes" if row.significant_holm else r"\no"
+        return (f"${row.mean_diff:+.3f}$ "
+                f"$[{row.ci_low:+.3f}, {row.ci_high:+.3f}]$ & {verdict}")
 
     lines = [
-        r"\begin{tabular}{llcccc}",
+        r"\begin{tabular}{lcccc}",
         r"\toprule",
-        r"Comparison & Metric & Unit & Mean diff. [95\% CI] & $p$ & Holm \\",
+        r"Comparison & Over seeds [95\% CI] & Holm & Over recordings [95\% CI] & Holm \\",
         r"\midrule",
     ]
-    for metric in ("point_f1", "composite_f1"):
-        block = skab[skab.metric == metric]
-        for unit in ("seed", "segment"):
-            rows = block[block.unit == unit]
-            for _, row in rows.iterrows():
-                verdict = r"\yes" if row.significant_holm else r"\no"
-                label = f"{PRETTY.get(row.strategy_a, row.strategy_a)} vs.\\ {PRETTY.get(row.strategy_b, row.strategy_b)}"
-                metric_name = "point" if metric == "point_f1" else "composite"
-                lines.append(
-                    f"{label} & {metric_name} & {unit} & "
-                    f"${row.mean_diff:+.3f}$ "
-                    f"$[{row.ci_low:+.3f}, {row.ci_high:+.3f}]$ & "
-                    f"{row.p_value:.4f} & {verdict} \\\\"
-                )
-        lines.append(r"\midrule")
-    lines[-1] = r"\bottomrule"
-    lines.append(r"\end{tabular}")
+    seeds = block[block.unit == "seed"]
+    for _, row in seeds.iterrows():
+        match = block[(block.unit == "segment")
+                      & (block.strategy_a == row.strategy_a)
+                      & (block.strategy_b == row.strategy_b)]
+        label = (f"{PRETTY.get(row.strategy_a, row.strategy_a)} vs.\\ "
+                 f"{PRETTY.get(row.strategy_b, row.strategy_b)}")
+        other = cell(match.iloc[0]) if not match.empty else "-- & --"
+        lines.append(f"{label} & {cell(row)} & {other} \\\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
     write("significance.tex", "\n".join(lines) + "\n")
 
 

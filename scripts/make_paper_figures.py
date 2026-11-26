@@ -67,6 +67,17 @@ STRATEGY_ORDER = [
     "elliptic-static",
 ]
 
+# The figures use the same names as the text and tables: "HST, never", not the
+# internal identifier "hst-static".
+MODEL_DISPLAY = {"hst": "HST", "iforest": "iForest", "lof": "LOF",
+                 "ocsvm": "OC-SVM", "elliptic": "MCD"}
+POLICY_DISPLAY = {"static": "never"}
+
+
+def display(strategy: str) -> str:
+    model, _, policy = strategy.partition("-")
+    return f"{MODEL_DISPLAY.get(model, model)}, {POLICY_DISPLAY.get(policy, policy)}"
+
 
 def style() -> None:
     mpl.rcParams.update({
@@ -173,7 +184,7 @@ def figure_metric_ranking(summary: pd.DataFrame, trivial: pd.Series | None) -> N
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(strategies, rotation=30, ha="right")
+    ax.set_xticklabels([display(s) for s in strategies], rotation=30, ha="right")
     ax.set_ylabel("F1")
     ax.set_ylim(0, 1.0)
     ax.yaxis.grid(True)
@@ -228,7 +239,7 @@ def figure_rank_flip(summary: pd.DataFrame) -> None:
             color=colour, alpha=1.0 if moves else 0.45, zorder=3 if moves else 2,
         )
         ax.annotate(
-            strategy, (x[-1], y[-1]), xytext=(6, 0),
+            display(strategy), (x[-1], y[-1]), xytext=(6, 0),
             textcoords="offset points", va="center", fontsize=7.5, color=colour,
         )
 
@@ -292,7 +303,7 @@ def figure_factorial(rows: pd.DataFrame) -> None:
             )
 
     ax.set_xticks(range(len(policy_order)), policy_order)
-    ax.set_yticks(range(len(model_order)), model_order)
+    ax.set_yticks(range(len(model_order)), [MODEL_DISPLAY.get(m, m) for m in model_order])
     ax.set_xlabel("adaptation policy")
     ax.set_ylabel("model")
     ax.set_title("Composite F1 by model and policy (SKAB valve1)", loc="left")
@@ -325,7 +336,7 @@ def figure_segment_spread(segments: pd.DataFrame) -> None:
 
     fig, ax = plt.subplots(figsize=(8.2, 3.6))
     parts = ax.boxplot(
-        data, tick_labels=strategies, patch_artist=True, widths=0.6,
+        data, tick_labels=[display(s) for s in strategies], patch_artist=True, widths=0.6,
         medianprops={"color": INK, "linewidth": 1.4},
         flierprops={"marker": "o", "markersize": 3, "markerfacecolor": MUTED,
                     "markeredgecolor": "none", "alpha": 0.6},
@@ -340,7 +351,7 @@ def figure_segment_spread(segments: pd.DataFrame) -> None:
 
     ax.axhline(0, color=INK, linestyle=(0, (4, 3)), linewidth=1.0)
     ax.set_ylabel("composite F1 minus flag-everything")
-    ax.set_xticklabels(strategies, rotation=30, ha="right")
+    ax.set_xticklabels([display(s) for s in strategies], rotation=30, ha="right")
     ax.yaxis.grid(True)
     ax.set_axisbelow(True)
     # Count the recordings actually scored: one of the sixteen carries no fault
@@ -430,7 +441,7 @@ def figure_ucr(rows: pd.DataFrame) -> None:
     for i, value in enumerate(grouped["found"]):
         left.text(i, value + 0.02, f"{value:.2f}", ha="center", fontsize=7.5, color=INK)
     left.set_xticks(x)
-    left.set_xticklabels(strategies, rotation=35, ha="right")
+    left.set_xticklabels([display(s) for s in strategies], rotation=35, ha="right")
     left.set_ylabel("proportion of anomalies found")
     left.set_ylim(0, 1.1)
     left.yaxis.grid(True)
@@ -443,7 +454,7 @@ def figure_ucr(rows: pd.DataFrame) -> None:
     )
     for name, row in grouped.iterrows():
         right.annotate(
-            name, (row["found"], row["precision"]), xytext=(5, 3),
+            display(name), (row["found"], row["precision"]), xytext=(5, 3),
             textcoords="offset points", fontsize=7, color=MUTED,
         )
     right.set_xlabel("proportion of anomalies found")
@@ -473,7 +484,7 @@ def figure_ablation(warmup: pd.DataFrame, horizon: pd.DataFrame) -> None:
             ax.plot(
                 series.index, series.to_numpy(),
                 marker=markers[i % len(markers)], markersize=4.5, linewidth=1.8,
-                color=colours[i % len(colours)], label=strategy,
+                color=colours[i % len(colours)], label=display(strategy),
             )
         ax.set_xlabel("warm-up size (rows)")
         ax.set_ylabel("composite F1")

@@ -53,12 +53,9 @@ whose rank is the same under all four conventions.}
 \label{fig:rankflip}
 \end{figure}
 
-Point-adjust is included to show what it does to the table. We do not rely on it.
-It credits an entire fault block for one flagged row, which on 390-row blocks
-inflates every strategy at once. \citet{kim2022rigorous} showed that this lets
-random predictions outscore trained models, and our test suite reproduces that
-failure directly: two flags placed in a 300-row stream reach a point-adjust
-recall of 1.0 against a point-wise recall of 0.01.
+Point-adjust is shown but not relied on: it credits an entire 390-row fault
+block for one flagged row, which inflates every strategy at once, as
+\citet{kim2022rigorous} warned.
 
 The last column of Table~\ref{tab:main} is the one to read first.
 \NBeatPoint{} of \NStrategies{} strategies clear the flag-everything baseline
@@ -103,15 +100,10 @@ within Half-Space Trees is wider than the spread across models within the
 column together, all of them flagging over 99\% of rows, which is the same
 failure the static Isolation Forest shows and not a quirk of one model.
 
-The MCD estimator is worth a note, because it is the one baseline that had to
-be nursed. It assumes the normal data forms one elliptical cloud, which SKAB's
-multi-regime stream violates, and \texttt{scikit-learn} emits a determinant
-warning on nearly every fit. On one NAB series it fails outright: 859 of the
-1{,}000 warm-up rows there are exactly 0.0, so the robust support it selects is
-entirely constant and the covariance is singular. We widen the support fraction
-until it fits and record that we did. Both facts are reported because a
-baseline that struggles for a stated structural reason is more useful than one
-quietly dropped.
+One baseline needed help. The MCD estimator assumes one elliptical cloud of
+normal data, and on one NAB series 859 of the 1{,}000 warm-up rows are exactly
+0.0, which makes its covariance singular; we widen its support fraction until it
+fits.
 
 \subsection{Does the ranking survive the data?}
 \label{sec:replication}
@@ -130,36 +122,33 @@ not reliably beat flagging everything on an arbitrary recording.}
 \label{fig:segments}
 \end{figure}
 
-Table~\ref{tab:significance} reports the paired comparisons the paper makes,
-over both units. Of \NComparisons{} comparisons on the labelled stream,
-\NSignificant{} survive Holm correction.
+Table~\ref{tab:significance} reports the paired comparisons under the composite
+score, over both units. Of \NComparisons{} comparisons on the labelled stream
+across all conventions, \NSignificant{} survive Holm correction; most of the
+ones that do not are comparisons over recordings.
 
 \begin{table}[t]
 \centering
 \small
 \input{tables/significance}
-\caption{Paired comparisons on the labelled stream, over seeds and over source
-recordings. Differences are the first strategy minus the second, with 95\%
-bootstrap intervals. $p$ is a two-sided Wilcoxon signed-rank test; the last
-column is the decision after Holm correction within the stream. Point-wise and
-composite scoring are shown; the range-based comparisons are counted in the
-totals quoted above and listed in full in \texttt{results/significance.csv}.}
+\caption{Paired comparisons under the composite score on the labelled stream,
+over seeds and over source recordings. Differences are the first strategy minus
+the second, with 95\% bootstrap intervals; ``Holm'' is the two-sided Wilcoxon
+signed-rank decision after Holm correction within the stream. The point-wise and
+range-based comparisons, with $p$-values, are in
+\texttt{results/significance.csv}.}
 \label{tab:significance}
 \end{table}
 
-The between-recording spread is the reason we consider the single-run tables
-this project started with to have been unsupportable. It is wide enough that a
-gap of a few hundredths, reported from one run, carries no information about
-which policy to deploy.
-
-It also complicates the aggregate ranking. \BestComposite{}, which wins
+The between-recording spread is wide enough that a gap of a few hundredths,
+reported from one run, says nothing about which policy to deploy. It also
+complicates the aggregate ranking. \BestComposite{}, which wins
 Table~\ref{tab:main} on the mean, fails to beat the trivial baseline on
 \BestCompositeLosses{} of the \NRecordings{} recordings, and its interquartile
 range in Figure~\ref{fig:segments} straddles zero. \SteadiestName{} scores
 lower on average but fails on \SteadiestLosses{} of them, with an interquartile
-range entirely above zero. Which of the two an operator should prefer depends on
-whether they are averaging over many streams or deploying on one, and the mean
-in the headline table cannot answer that.
+range entirely above zero. Which one to prefer depends on whether the operator
+is averaging over many streams or deploying on one.
 
 \subsection{Drift detectors and detection timing}
 \label{sec:timing}
@@ -199,19 +188,12 @@ shape it never fires at all, at any magnitude. Running a mean ADWIN and a
 variance ADWIN together and firing when either does recovers every shape and
 keeps the better gradual delay.
 
-Page-Hinkley was added to this comparison as a third opinion and turned out to
-be the most interesting entry in the table. It is the quickest of the five on
-both the sudden and the recurring shapes, and it raises fewer false alarms than
-ADWIN while doing it. What it gives up is the incremental ramp, where it is the
-slowest detector that fires at all: a cumulative sum needs the deviation to
-accumulate, and a slow ramp supplies it slowly. That is a clean trade and not a
-defect, and it is the kind of thing a single-detector study cannot see.
-KSWIN is the one detector we would not recommend from these numbers: it is
-slower than ADWIN on every shape and raises the most false alarms of the five.
-
-The false-alarm column has to be read with Section~\ref{sec:limitations} in mind.
-SKAB's anomaly-free recording is not stationary, so an unknown share of those
-firings are the detector correctly noticing real process change.
+Page-Hinkley is the quickest of the five on the sudden and recurring shapes and
+raises fewer false alarms than ADWIN, but it is the slowest detector that fires
+at all on the incremental ramp: a cumulative sum needs the deviation to
+accumulate, and a slow ramp supplies it slowly. KSWIN is slower than ADWIN on
+every shape and raises the most false alarms. The false-alarm column is an upper
+bound, for the reason given in Section~\ref{sec:limitations}.
 
 \subsection{Transferring the calibration}
 \label{sec:transfer}
@@ -232,37 +214,23 @@ trivial baseline for that series.}
 \label{tab:transfer}
 \end{table}
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=\textwidth]{../results/figures/paper/transfer.pdf}
-\caption{Best strategy per NAB series under point-wise and composite scoring,
-with the trivial baseline marked.}
-\label{fig:transfer}
-\end{figure}
-
-The metric effect reappears here and is larger than on SKAB
-(Figure~\ref{fig:transfer}). Under point-wise
+The metric effect reappears here and is larger than on SKAB. Under point-wise
 scoring the transferred setting beats the trivial baseline on
 \NNabBeatsPoint{} of \NNabSeries{} series; under composite scoring it beats it
 on \NNabBeatsComposite{}. NAB's anomalies are short and sparse, so point-wise
 recall penalises a detector that flags a window without also flagging its
 neighbourhood, which is the behaviour the composite score is built to credit.
-The method carries across datasets in a way the point-wise numbers alone would
-deny.
-
 What does not carry is any particular strategy. \NNabDistinctWinners{}
 different strategies take the top place across the \NNabSeries{} series, and
-one of them is a classical static baseline. There is no ranking here to
-transfer, only a method and a threshold that has to be set per deployment.
+one of them is a classical static baseline, so the threshold has to be set per
+deployment.
 
 \subsection{Where event recall discriminates}
 \label{sec:ucr}
 
-Everything above is scored on data where the recall axis is nearly flat. On SKAB
-every strategy catches every labelled event, so composite F1 is a ranking on
-precision and nothing else. The UCR subset is here to supply the missing axis:
-one anomaly per series, \NUcrSeries{} series, so a strategy either finds each
-one or it does not.
+On SKAB every strategy catches every labelled event, so composite F1 is a
+ranking on precision alone. The UCR subset supplies the missing axis: one anomaly
+per series, so a strategy either finds each one or it does not.
 
 \begin{table}[t]
 \centering
@@ -275,47 +243,23 @@ pays for it in precision.}
 \label{tab:ucr}
 \end{table}
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=\textwidth]{../results/figures/paper/ucr.pdf}
-\caption{Left: the proportion of UCR anomalies each strategy found. Right: the
-same quantity against point-wise precision, which is the trade the composite
-score combines.}
-\label{fig:ucr}
-\end{figure}
-
-The proportion of anomalies found (Figure~\ref{fig:ucr}) runs from
+The proportion of anomalies found (Table~\ref{tab:ucr}) runs from
 \WorstUcrFound{} for \WorstUcrName{} to \BestUcrFound{} for \BestUcrName{}, a
-spread of \UcrRecallSpread{}. That spread is the first thing to note. It is a real
-difference between strategies that SKAB cannot show at all and NAB shows only
-partially, and it exists because the benchmark was built so a detector can miss.
-
-The second thing to note is the level. The best strategy here finds
-\BestUcrFound{} of the anomalies. Not one of the ten finds most of them, and
-that is on a subset chosen for being short and tractable. Whatever these
-policies are doing on SKAB, they are not solving this.
-
-The base rate is \UcrBaseRate\%, which puts the trivial baseline at
-\UcrFlagAll{} rather than the \FlagAll{} it reaches on SKAB. That is a much
-lower bar and it is the bar a detector should face: where anomalies are genuinely
-rare, flagging everything is obviously useless, and a benchmark on which it looks
-competitive is the problem \citet{wu2023flawed} were describing.
+real spread that SKAB cannot show at all. The level matters more: not one of the
+ten finds most of the anomalies, on a subset chosen for being short and
+tractable. Against a trivial baseline of \UcrFlagAll{},
 \NUcrBeatComposite{} of \NStrategies{} strategies clear it under the composite
-score and \NUcrBeatPoint{} point-wise, but the margins are small enough that
-clearing it is not much of a claim.
+score and \NUcrBeatPoint{} point-wise, by margins too small to mean much.
 
-\paragraph{The archive's own criterion.} Scoring UCR with a thresholded F1 is
-not what its authors intended. They score a series as solved when the single
-highest anomaly score falls inside the labelled window, and they argue for that
-because it needs no threshold, so the cutoff stops being part of what is
-measured. Substituting our own convention for theirs would be the exact move
+\paragraph{The archive's own criterion.} The archive's authors score a series as solved
+when the single highest anomaly score falls inside the labelled window, which
+needs no threshold. Substituting our convention for theirs would be the move
 this paper criticises, so Table~\ref{tab:ucr} reports both. Under the archive's
 criterion the best strategies, tied, are \BestUcrTopOne{}, each at
 \BestUcrTopOneVal{}; the worst manages \WorstUcrTopOneVal{}, and the average
 across all ten is \MeanUcrTopOne{}. None of the strategies at the top of that
 list is the one with the best composite score, so the two protocols do not
-agree on a winner. That is the same disagreement this paper documents between
-conventions, now reproduced between our scoring and the dataset author's.
+agree on a winner either.
 
 \paragraph{Adaptation does not help here.} The best composite score on this data
 belongs to \BestUcrComposite{}, and the most anomalies are found by
@@ -323,9 +267,7 @@ belongs to \BestUcrComposite{}, and the most anomalies are found by
 one of the \NUcrAdaptive{} adaptive configurations. On the benchmark built to be hard,
 the question this paper is about stops mattering: the policies are separated by
 less than the noise, and the classical static detectors are as good as anything
-with a rebuild schedule. We report that because it is what the data says, and
-because a paper that found adaptation mattered on two datasets and quietly left
-out the third would be doing what its own introduction complains about.
+with a rebuild schedule.
 
 \subsection{Sensitivity to the constants we chose}
 \label{sec:ablation}
@@ -345,48 +287,22 @@ scored, so the base rate moves with it; the raw counts are in
 \label{fig:ablation}
 \end{figure}
 
-The matching horizon turns out not to be load-bearing. Past 500 steps the
-mean delay is identical for every drift shape, and the gradual case is the
-only one that moves at all between the shortest setting and the default. A
-detection either lands close to the change point or does not land at all, so
-the exact cut-off has little to decide.
-
-Warm-up length is the constant that does matter, and it does not treat the
-policies alike: the periodic schedule improves steadily as the warm-up
-lengthens, while the drift-triggered one is flat and the static baseline moves
-erratically. We report this as a sensitivity and not as a tuning result,
-because changing the warm-up also changes which rows are scored, and on a
-stream with unevenly spaced faults that moves the base rate underneath the
-comparison. The per-setting base rates are in
-\texttt{results/ablation\_warmup.csv}.
-
-The cooldown behaves as it was designed to and buys less than expected. At the
-two shortest settings the number of rebuilds is identical, which says the
-detector's own firing spacing already exceeds them; only at the longest
-setting does suppression bite hard enough to halve the rebuilds. None of the
-conclusions above depends on the value we picked.
+The matching horizon is not load-bearing: past 500 steps the mean delay is
+identical for every drift shape. Warm-up length does matter, and unevenly: the
+periodic schedule improves steadily as the warm-up lengthens, the drift-triggered
+one is flat, and the static baseline moves erratically. We treat this as a
+sensitivity, not a tuning result, because changing the warm-up also changes which
+rows are scored and so moves the base rate. The cooldown changes the number of
+rebuilds only at its longest setting, and none of the conclusions above depends
+on it.
 
 \subsection{Cost}
 \label{sec:cost}
 
-A streaming method that cannot keep up with the stream is not one.
-Table~\ref{tab:cost} reports throughput on a single laptop core.
-
-\begin{table}[t]
-\centering
-\input{tables/cost}
-\caption{Throughput and rebuild count on the labelled stream, averaged over
-seeds. The static sklearn baselines score in vectorised blocks; the Half-Space
-Trees implementation scores one observation at a time, which is the honest cost
-of an online model in this library.}
-\label{tab:cost}
-\end{table}
-
-The spread here is a property of the implementations, not of the algorithms:
-Half-Space Trees is scored one observation at a time in \texttt{river}, while
-the sklearn baselines are scored in vectorised blocks. It is reported because a
-comparison that leaves cost out is incomplete. On this hardware the slowest
-strategy, \SlowestModel{}, processes \SlowestRows{} rows per second against
-\FastestRows{} for \FastestModel{}, a factor of about \SpeedRatio{}. Every
-strategy here keeps up with anything a single sensor rig produces; the figure
-starts to matter when one detector is run across thousands of streams at once.
+On one laptop core the slowest strategy, \SlowestModel{}, processes
+\SlowestRows{} rows per second and the fastest, \FastestModel{}, \FastestRows{},
+a factor of about \SpeedRatio{}. Most of that gap is implementation:
+Half-Space Trees is scored one observation at a time in \texttt{river}, the
+\texttt{scikit-learn} baselines in vectorised blocks. Every strategy keeps up
+with a single sensor rig; per-strategy figures are in
+\texttt{results/throughput.csv}.

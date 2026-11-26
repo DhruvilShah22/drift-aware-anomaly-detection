@@ -501,6 +501,7 @@ h3 { font-size: 1.04rem; margin: 1.7rem 0 .5rem; }
 h4 { font-size: .97rem; margin: 1.2rem 0 .3rem; font-style: italic; font-weight: 600; }
 p { margin: 0 0 .85rem; }
 .byline { color: #52514e; font-size: .95rem; margin-bottom: 1.6rem; }
+.byline .small { font-size: .85rem; }
 .byline code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
 .abstract { background: #f2f1ec; border-left: 3px solid #2a78d6;
             padding: 1rem 1.2rem; margin: 1.6rem 0 2rem; }
@@ -533,8 +534,20 @@ ol.bib li { margin-bottom: .45rem; }
 .bibkey { display: none; }
 .math { font-family: 'Times New Roman', serif; font-style: italic; }
 @media print {
-  body { background: #fff; }
-  main { max-width: none; padding: 0; }
+  @page { margin: 0.9in; }
+  body { background: #fff; font-size: 10.5pt; line-height: 1.45; }
+  h1 { font-size: 17pt; }
+  h2 { font-size: 12.5pt; margin: 1.4rem 0 .5rem; }
+  h3 { font-size: 11pt; margin: 1.1rem 0 .4rem; }
+  table.data { font-size: 6.9pt; }
+  table.data td { white-space: nowrap; padding: .18rem .35rem; }
+  table.data th { padding: .18rem .35rem; }
+  figure.table-wrap { overflow: visible; }
+  .abstract { margin: 1rem 0 1.4rem; }
+  main { max-width: none; padding: 0; background: #fff; }
+  figure img { width: 68%; margin: 0 auto; }
+  figcaption { font-size: 8.5pt; }
+  figure { margin: 1rem 0; }
   h2 { break-after: avoid; }
   figure, table { break-inside: avoid; }
 }
@@ -569,11 +582,16 @@ def main() -> int:
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title_text}</title>
+<title>{re.sub(r"<[^>]+>", "", title_text)}</title>
+<meta name="author" content="Dhruvil Amit Shah">
 <style>{STYLE}</style>
 </head><body><main>
 <h1>{title_text}</h1>
-<p class="byline">Dhruvil Amit Shah &middot; <code>contactshahdhruvil@gmail.com</code> &middot; September 2026 &middot; License: CC BY 4.0</p>
+<p class="byline">Dhruvil Amit Shah<br>
+<span class="small">Independent Researcher &middot; contactshahdhruvil@gmail.com &middot; ORCID 0009-0008-2988-5216</span><br>
+<span class="small">Preprint &middot; September 2026, revised November 2026<br>
+Code and data: https://github.com/DhruvilShah22/drift-aware-anomaly-detection &middot; License: CC BY 4.0<br>
+Cite as: D. A. Shah, &ldquo;Scoring conventions reorder adaptation policies in streaming anomaly detection,&rdquo; Zenodo, 2026, doi:10.5281/zenodo.22333125.</span></p>
 {html_body}
 {render_bibliography()}
 </main></body></html>

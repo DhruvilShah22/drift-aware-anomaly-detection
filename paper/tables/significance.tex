@@ -1,39 +1,14 @@
-\begin{tabular}{llcccc}
+\begin{tabular}{lcccc}
 \toprule
-Comparison & Metric & Unit & Mean diff. [95\% CI] & $p$ & Holm \\
+Comparison & Over seeds [95\% CI] & Holm & Over recordings [95\% CI] & Holm \\
 \midrule
-HST, periodic vs.\ HST, never & point & seed & $+0.140$ $[+0.109, +0.169]$ & 0.0020 & \yes \\
-HST, drift vs.\ HST, never & point & seed & $+0.100$ $[+0.067, +0.131]$ & 0.0020 & \yes \\
-HST, periodic vs.\ HST, drift & point & seed & $+0.040$ $[+0.035, +0.045]$ & 0.0020 & \yes \\
-HST, periodic vs.\ HST, online & point & seed & $+0.203$ $[+0.184, +0.221]$ & 0.0020 & \yes \\
-iForest, periodic vs.\ iForest, never & point & seed & $+0.024$ $[+0.023, +0.025]$ & 0.0020 & \yes \\
-iForest, drift vs.\ iForest, never & point & seed & $+0.025$ $[+0.023, +0.026]$ & 0.0020 & \yes \\
-HST, periodic vs.\ iForest, periodic & point & seed & $-0.021$ $[-0.029, -0.012]$ & 0.0059 & \yes \\
-HST, never vs.\ iForest, never & point & seed & $-0.137$ $[-0.168, -0.104]$ & 0.0020 & \yes \\
-HST, periodic vs.\ HST, never & point & segment & $+0.134$ $[+0.066, +0.198]$ & 0.0067 & \yes \\
-HST, drift vs.\ HST, never & point & segment & $+0.085$ $[+0.016, +0.147]$ & 0.0353 & \no \\
-HST, periodic vs.\ HST, drift & point & segment & $+0.049$ $[+0.004, +0.097]$ & 0.0554 & \no \\
-HST, periodic vs.\ HST, online & point & segment & $+0.197$ $[+0.131, +0.260]$ & 0.0001 & \yes \\
-iForest, periodic vs.\ iForest, never & point & segment & $+0.025$ $[+0.011, +0.041]$ & 0.0020 & \yes \\
-iForest, drift vs.\ iForest, never & point & segment & $+0.026$ $[+0.008, +0.045]$ & 0.0151 & \no \\
-HST, periodic vs.\ iForest, periodic & point & segment & $-0.029$ $[-0.086, +0.026]$ & 0.3894 & \no \\
-HST, never vs.\ iForest, never & point & segment & $-0.138$ $[-0.146, -0.130]$ & 0.0001 & \yes \\
-\midrule
-HST, periodic vs.\ HST, never & composite & seed & $+0.075$ $[+0.058, +0.092]$ & 0.0020 & \yes \\
-HST, drift vs.\ HST, never & composite & seed & $+0.045$ $[+0.027, +0.063]$ & 0.0020 & \yes \\
-HST, periodic vs.\ HST, drift & composite & seed & $+0.030$ $[+0.026, +0.035]$ & 0.0020 & \yes \\
-HST, periodic vs.\ HST, online & composite & seed & $+0.083$ $[+0.077, +0.089]$ & 0.0020 & \yes \\
-iForest, periodic vs.\ iForest, never & composite & seed & $+0.033$ $[+0.032, +0.035]$ & 0.0020 & \yes \\
-iForest, drift vs.\ iForest, never & composite & seed & $+0.036$ $[+0.034, +0.038]$ & 0.0020 & \yes \\
-HST, periodic vs.\ iForest, periodic & composite & seed & $+0.058$ $[+0.052, +0.066]$ & 0.0020 & \yes \\
-HST, never vs.\ iForest, never & composite & seed & $+0.017$ $[-0.002, +0.035]$ & 0.1934 & \no \\
-HST, periodic vs.\ HST, never & composite & segment & $+0.064$ $[+0.010, +0.114]$ & 0.0479 & \no \\
-HST, drift vs.\ HST, never & composite & segment & $+0.030$ $[-0.028, +0.078]$ & 0.1070 & \no \\
-HST, periodic vs.\ HST, drift & composite & segment & $+0.034$ $[-0.016, +0.082]$ & 0.1876 & \no \\
-HST, periodic vs.\ HST, online & composite & segment & $+0.072$ $[+0.021, +0.119]$ & 0.0256 & \no \\
-iForest, periodic vs.\ iForest, never & composite & segment & $+0.036$ $[+0.021, +0.055]$ & 0.0002 & \yes \\
-iForest, drift vs.\ iForest, never & composite & segment & $+0.038$ $[+0.021, +0.058]$ & 0.0006 & \yes \\
-HST, periodic vs.\ iForest, periodic & composite & segment & $+0.045$ $[-0.003, +0.089]$ & 0.1070 & \no \\
-HST, never vs.\ iForest, never & composite & segment & $+0.017$ $[+0.008, +0.025]$ & 0.0026 & \yes \\
+HST, periodic vs.\ HST, never & $+0.075$ $[+0.058, +0.092]$ & \yes & $+0.064$ $[+0.010, +0.114]$ & \no \\
+HST, drift vs.\ HST, never & $+0.045$ $[+0.027, +0.063]$ & \yes & $+0.030$ $[-0.028, +0.078]$ & \no \\
+HST, periodic vs.\ HST, drift & $+0.030$ $[+0.026, +0.035]$ & \yes & $+0.034$ $[-0.016, +0.082]$ & \no \\
+HST, periodic vs.\ HST, online & $+0.083$ $[+0.077, +0.089]$ & \yes & $+0.072$ $[+0.021, +0.119]$ & \no \\
+iForest, periodic vs.\ iForest, never & $+0.033$ $[+0.032, +0.035]$ & \yes & $+0.036$ $[+0.021, +0.055]$ & \yes \\
+iForest, drift vs.\ iForest, never & $+0.036$ $[+0.034, +0.038]$ & \yes & $+0.038$ $[+0.021, +0.058]$ & \yes \\
+HST, periodic vs.\ iForest, periodic & $+0.058$ $[+0.052, +0.066]$ & \yes & $+0.045$ $[-0.003, +0.089]$ & \no \\
+HST, never vs.\ iForest, never & $+0.017$ $[-0.002, +0.035]$ & \no & $+0.017$ $[+0.008, +0.025]$ & \yes \\
 \bottomrule
 \end{tabular}
