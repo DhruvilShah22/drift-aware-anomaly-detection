@@ -70,7 +70,10 @@ Range-based scoring moves the baseline as well as the detectors, and it is
 worth saying where it lands. Flagging every row produces one predicted range
 spanning the stream, so its precision is divided by the number of true events
 that range swallows, and the trivial baseline drops to \FlagAllRange{}.
-Against that, \NBeatRange{} of \NStrategies{} strategies clear it. The
+Against that, \NBeatRange{} of \NStrategies{} strategies clear it on the mean,
+but only \NBeatRangeClear{} do so with their whole interval above the baseline;
+the other, \RangeMarginalName{}, scores \RangeMarginalVal{} against
+\FlagAllRangeFine{}, a margin well inside its own interval. The
 detectors are charged in the opposite direction: a permissive policy emits
 thousands of short predicted ranges across each fault, and the cardinality
 factor bills it for every fragment. Fragmentation is invisible to the other
@@ -307,12 +310,12 @@ highest anomaly score falls inside the labelled window, and they argue for that
 because it needs no threshold, so the cutoff stops being part of what is
 measured. Substituting our own convention for theirs would be the exact move
 this paper criticises, so Table~\ref{tab:ucr} reports both. Under the archive's
-criterion the best strategy is \BestUcrTopOne{} at \BestUcrTopOneVal{}, the
-worst manages \WorstUcrTopOneVal{}, and the average across all ten is
-\MeanUcrTopOne{}. The two protocols do not even agree on a winner
-(\TopOneAgreesWithComposite{}), which is the same disagreement this paper
-documents between conventions, now reproduced between our scoring and the
-dataset author's.
+criterion the best strategies, tied, are \BestUcrTopOne{}, each at
+\BestUcrTopOneVal{}; the worst manages \WorstUcrTopOneVal{}, and the average
+across all ten is \MeanUcrTopOne{}. None of the strategies at the top of that
+list is the one with the best composite score, so the two protocols do not
+agree on a winner. That is the same disagreement this paper documents between
+conventions, now reproduced between our scoring and the dataset author's.
 
 \paragraph{Adaptation does not help here.} The best composite score on this data
 belongs to \BestUcrComposite{}, and the most anomalies are found by

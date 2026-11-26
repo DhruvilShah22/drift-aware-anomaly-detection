@@ -81,6 +81,7 @@ DASH_GUARD = "\x00dash\x00"
 # without them the HTML would show raw keys like "fig:ranking" and
 # "kim2022rigorous" where the PDF shows "Figure 1" and "Kim et al. (2022)".
 LABEL_NUMBERS: dict[str, str] = {}
+SECTION_TITLES: dict[str, str] = {}
 CITATIONS: dict[str, str] = {}
 
 
@@ -214,11 +215,24 @@ def inline(text: str, macros: dict[str, str]) -> str:
 
     text = re.sub(r"\\(citep|citet)\{([^}]*)\}", cite, text)
 
+    def section_reference(match: re.Match) -> str:
+        # Sections are unnumbered in the rendered paper, so "Section~\\ref{x}"
+        # is written as the section's own name instead of a bare "this section".
+        label = match.group(1)
+        title = SECTION_TITLES.get(label)
+        if title is None:
+            raise KeyError(f"no section title for {label}")
+        before = text[: match.start()].rstrip()
+        opener = "The" if (not before or before.endswith((".", "?", "!"))) else "the"
+        return f'{opener} section <a href="#{label}">&ldquo;{title}&rdquo;</a>'
+
+    text = re.sub(r"Section~\\ref\{(sec:[^}]*)\}", section_reference, text)
+
     def reference(match: re.Match) -> str:
         label = match.group(1)
         shown = LABEL_NUMBERS.get(label)
         if shown is None:
-            return f'<a href="#{label}">this section</a>'
+            raise KeyError(f"unresolved cross-reference: {label}")
         return f'<a href="#{label}">{shown}</a>'
 
     text = re.sub(r"\\ref\{([^}]*)\}", reference, text)
@@ -533,6 +547,10 @@ def main() -> int:
     macros = collect_macros(source)
 
     LABEL_NUMBERS.update(build_label_numbers(source))
+    for heading in re.finditer(
+        r"\\(?:sub)?section\*?\{(.+?)\}\s*\\label\{(sec:[^}]*)\}", source
+    ):
+        SECTION_TITLES[heading.group(2)] = heading.group(1)
     CITATIONS.update(build_citations(PAPER / "references.bib"))
 
     title = re.search(r"\\title\{(.*?)\}\s*\n", source, flags=re.S)
@@ -555,7 +573,7 @@ def main() -> int:
 <style>{STYLE}</style>
 </head><body><main>
 <h1>{title_text}</h1>
-<p class="byline">Dhruvil Shah &middot; <code>contactshahdhruvil@gmail.com</code> &middot; September 2026</p>
+<p class="byline">Dhruvil Amit Shah &middot; <code>contactshahdhruvil@gmail.com</code> &middot; September 2026 &middot; License: CC BY 4.0</p>
 {html_body}
 {render_bibliography()}
 </main></body></html>

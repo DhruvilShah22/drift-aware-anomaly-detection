@@ -413,6 +413,18 @@ def table_numbers(summary, rows, significance, segments, speed=None,
         put("FlagAllPA", f"{trivial['pa_f1']:.3f}")
         put("NBeatRange", int((skab["range_f1_mean"] > trivial["range_f1"]).sum()))
         put("NBeatPA", int((skab["pa_f1_mean"] > trivial["pa_f1"]).sum()))
+        # A mean that clears the baseline by less than its own interval is not
+        # a clear win, so count the strategies whose whole interval clears it.
+        above = skab[skab["range_f1_mean"] > trivial["range_f1"]]
+        clear = above[above["range_f1_ci_low"] > trivial["range_f1"]]
+        marginal = above.drop(clear.index)
+        put("NBeatRangeClear", int(len(clear)))
+        put("NBeatRangeMarginal", int(len(marginal)))
+        if len(marginal):
+            name = marginal.index[0]
+            put("RangeMarginalName", PRETTY.get(name, name))
+            put("RangeMarginalVal", f"{marginal.iloc[0]['range_f1_mean']:.4f}")
+            put("FlagAllRangeFine", f"{trivial['range_f1']:.4f}")
 
     if segments is not None and not segments.empty:
         put("NRecordings", int(segments.segment.nunique()))
@@ -490,14 +502,18 @@ def table_numbers(summary, rows, significance, segments, speed=None,
 
         if "top1" in ucr.columns:
             top1 = ucr["top1"].sort_values(ascending=False)
-            put("BestUcrTopOne", PRETTY.get(top1.index[0], top1.index[0]))
+            # Several deterministic strategies can score the same fraction of
+            # series, so name every strategy at the top rather than one of them.
+            tied = [PRETTY.get(n, n) for n in top1.index[top1 >= top1.iloc[0] - 1e-12]]
+            put("BestUcrTopOne", "; ".join(tied[:-1]) + "; and " + tied[-1] if len(tied) > 1 else tied[0])
+            put("NBestUcrTopOne", len(tied))
             put("BestUcrTopOneVal", f"{top1.iloc[0]:.2f}")
             put("WorstUcrTopOneVal", f"{top1.iloc[-1]:.2f}")
             put("MeanUcrTopOne", f"{ucr['top1'].mean():.2f}")
             # Do the two protocols agree on who is best?
             put(
                 "TopOneAgreesWithComposite",
-                "yes" if top1.index[0] == ucr["composite"].idxmax() else "no",
+                "yes" if ucr["composite"].idxmax() in top1.index[top1 >= top1.iloc[0] - 1e-12] else "no",
             )
         put("NUcrBeatComposite", int((ucr["composite"] > ucr["baseline"]).sum()))
         put("NUcrBeatPoint", int((ucr["point"] > ucr["baseline"]).sum()))

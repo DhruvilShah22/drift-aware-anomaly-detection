@@ -14,8 +14,8 @@ happens, alarms while the model is stale, then settles once it rebuilds.*
 
 The study this repository supports is written up in [`paper/`](paper/):
 *Scoring conventions reorder adaptation policies in streaming anomaly
-detection*, deposited on Zenodo as [10.5281/zenodo.22333127](https://doi.org/10.5281/zenodo.22333127). It repeats the whole comparison over 10 seeds and the 16 source
-recordings, crosses the adaptation policy with the anomaly model instead of
+detection*, deposited on Zenodo as [10.5281/zenodo.22333127](https://doi.org/10.5281/zenodo.22333127). It repeats the whole comparison over 10 seeds and the 15 source
+recordings that carry a fault (16 recordings make up the labelled stream), crosses the adaptation policy with the anomaly model instead of
 confounding them, adds three classical detectors as baselines, and scores the
 same runs under four published conventions. The conventions disagree about which
 policy is best, which is the paper's result.
@@ -26,8 +26,8 @@ there carries exactly one short anomaly, so event recall stops being a constant
 1.0 and starts measuring something. It is also where the adaptation question
 falls apart. No policy separates from the others, the classical static detectors
 match anything with a rebuild schedule, and under the archive's own
-threshold-free criterion the best of the ten strategies puts its peak score
-inside the labelled window on 12% of series. That result is in the paper
+threshold-free criterion the best strategies (three tied) put their peak score
+inside the labelled window on 12% of series, and the average across all ten is 6%. That result is in the paper
 alongside the ones that worked.
 
 ```bash
@@ -110,7 +110,36 @@ python scripts/run_throughput.py     # timing, on an otherwise quiet machine
 Tested on Python 3.13. On Windows, launch the app with
 `python -m streamlit run app/streamlit_app.py`.
 
-## Results
+## Headline results (10 seeds; these are the paper's numbers)
+
+All figures below are means over 10 seeds on the labelled SKAB `valve1` stream
+(17,160 scored rows, 34.4% anomalous), from the paper and
+`results/multiseed_summary.csv`. Flagging every row scores point-wise F1 0.512.
+
+- **The scoring convention decides the winner.** Four published conventions give
+  four different winners: point-wise F1 picks Isolation Forest with drift-triggered
+  rebuilds (0.539), the composite F-score picks Half-Space Trees with periodic
+  rebuilds (0.606), range-based scoring picks Isolation Forest with periodic
+  rebuilds (0.198), and point-adjust picks Half-Space Trees with no resets (0.794).
+- **Rankings move on identical predictions.** All 10 strategies change rank between
+  point-wise and composite scoring; the largest move is 6 places. Half-Space Trees
+  with drift-triggered rebuilds is 8th of 10 point-wise and 2nd under the composite
+  score.
+- **The continuously-learning control was not broken.** The single-seed run below
+  called it broken; under event-level scoring it catches every fault, and under
+  point-adjust it ranks first.
+- **Beating flag-everything depends on the convention.** 7 of 10 strategies clear
+  it point-wise and 10 of 10 under the composite score. Under range-based scoring
+  3 of 10 clear it on the mean, but only 2 with their whole interval above the
+  baseline.
+- **On the UCR Anomaly Archive subset, no policy separates from the others.** The
+  classical static detectors match anything with a rebuild schedule.
+- **Detection timing:** at a 3 sd shift, ADWIN on the variance of the monitored
+  statistic cuts gradual-drift delay from 258 to 104 rows (mean over seeds) but
+  never fires on incremental drift. Running the mean and variance ADWINs together
+  recovers every shape.
+
+## Results from the single-seed development run (superseded)
 
 > **The tables in this section come from a single run at one seed.** They are
 > kept because the rest of this README explains what they show and why. The
@@ -118,7 +147,10 @@ Tested on Python 3.13. On Windows, launch the app with
 > significance tests, is in the paper and in `results/multiseed_summary.csv`.
 > Where the two disagree, the paper is the one to believe: several gaps that
 > look decisive below are inside the spread a policy shows when only the seed
-> changes.
+> changes, and two conclusions drawn from this single run (that periodic rebuilds
+> are best, and that the continuously-learning control is broken) were properties
+> of the scoring convention and are retracted in the paper. Do not quote the
+> numbers in this section.
 
 
 ### Alarm volume when normal shifts
@@ -461,12 +493,12 @@ Development log, including the design mistakes found by running the code, is in
 
 ## Citing this
 
-Shah, D. (2026). *Scoring conventions reorder adaptation policies in streaming
+Shah, D. A. (2026). *Scoring conventions reorder adaptation policies in streaming
 anomaly detection*. Zenodo. https://doi.org/10.5281/zenodo.22333127
 
 ```bibtex
 @misc{shah2026scoring,
-  author       = {Shah, Dhruvil},
+  author       = {Shah, Dhruvil Amit},
   title        = {Scoring conventions reorder adaptation policies in streaming anomaly detection},
   year         = {2026},
   publisher    = {Zenodo},
